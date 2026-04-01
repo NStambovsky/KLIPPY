@@ -7,3 +7,4 @@ aiofiles==23.2.1
 pydantic==2.7.1
 numpy==1.26.4
 scipy==1.13.0
+yt-dlp==2024.5.27

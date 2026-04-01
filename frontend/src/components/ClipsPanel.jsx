@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 
+async function safeJson(res) {
+  const text = await res.text()
+  if (!text) return {}
+  try { return JSON.parse(text) } catch { return { detail: text } }
+}
+
 function formatDur(s) {
   if (!isFinite(s) || s == null) return '–'
   const m = Math.floor(s / 60)
@@ -51,12 +57,11 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_id: fileId, num_clips: numClips, target_duration: targetDur }),
       })
+      const data = await safeJson(res)
       if (!res.ok) {
-        const err = await res.json()
-        onToast(err.detail || 'Auto-clip failed', 'error')
+        onToast(data.detail || 'Auto-clip failed', 'error')
         return
       }
-      const data = await res.json()
       setAutoClips(data.clips || [])
       if (!data.clips?.length) onToast('No clips found — try a longer video', 'info')
     } catch (e) {
@@ -82,13 +87,12 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
           output_name: `edit_${Date.now()}`,
         }),
       })
+      const data = await safeJson(res)
       if (!res.ok) {
-        const err = await res.json()
-        onToast(err.detail || 'Export failed', 'error')
+        onToast(data.detail || 'Export failed', 'error')
         setExportingId(null)
         return
       }
-      const data = await res.json()
       pollJob(data.job_id, data.output_name, 'edit')
     } catch (e) {
       onToast(e.message, 'error')
@@ -109,13 +113,12 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
           output_name: `autoclip_${idx + 1}_${Date.now()}`,
         }),
       })
+      const data = await safeJson(res)
       if (!res.ok) {
-        const err = await res.json()
-        onToast(err.detail || 'Export failed', 'error')
+        onToast(data.detail || 'Export failed', 'error')
         setExportingId(null)
         return
       }
-      const data = await res.json()
       pollJob(data.job_id, data.output_name, idx)
     } catch (e) {
       onToast(e.message, 'error')
@@ -127,7 +130,7 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/job/${jobId}`)
-        const job = await res.json()
+        const job = await safeJson(res)
         if (job.status === 'done') {
           clearInterval(interval)
           setExportingId(null)

@@ -6,6 +6,12 @@ import ClipsPanel from './components/ClipsPanel.jsx'
 
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac'])
 
+async function safeJson(res) {
+  const text = await res.text()
+  if (!text) return {}
+  try { return JSON.parse(text) } catch { return { detail: text } }
+}
+
 export default function App() {
   const [uploadedFile, setUploadedFile] = useState(null) // {file_id, filename, duration, media_url}
   const [transcript, setTranscript] = useState(null)
@@ -49,13 +55,12 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_id: uploadedFile.file_id, model_size: modelSize }),
       })
+      const data = await safeJson(res)
       if (!res.ok) {
-        const err = await res.json()
-        addToast(err.detail || 'Transcription failed', 'error')
+        addToast(data.detail || 'Transcription failed', 'error')
         setTranscribing(false)
         return
       }
-      const data = await res.json()
 
       // Cached result
       if (data.status === 'done' && data.transcript) {
@@ -78,7 +83,7 @@ export default function App() {
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`/job/${jobId}`)
-        const job = await res.json()
+        const job = await safeJson(res)
         if (job.status === 'done') {
           clearInterval(pollRef.current)
           setTranscript(job.result)

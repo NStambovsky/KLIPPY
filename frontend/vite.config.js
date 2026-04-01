@@ -18,6 +18,7 @@ export default defineConfig({
       '/media': 'http://localhost:8000',
       '/clips-media': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
+      '/download-url': 'http://localhost:8000',
     },
   },
 })

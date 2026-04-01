@@ -88,6 +88,10 @@ class TranscribeRequest(BaseModel):
     model_size: str = "base"
 
 
+class DownloadURLRequest(BaseModel):
+    url: str
+
+
 # ---------------------------------------------------------------------------
 # Background tasks
 # ---------------------------------------------------------------------------
@@ -146,6 +150,61 @@ async def upload_file(file: UploadFile = File(...)):
         "duration": duration,
         "media_url": f"/media/{file_id}",
     }
+
+
+@app.post("/download-url")
+async def download_url(req: DownloadURLRequest, background_tasks: BackgroundTasks):
+    """Download a video from a URL (YouTube, etc.) using yt-dlp."""
+    import yt_dlp
+
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "queued", "result": None, "error": None}
+
+    def _do_download(job_id: str, url: str):
+        try:
+            jobs[job_id] = {"status": "running", "result": None, "error": None}
+            file_id = str(uuid.uuid4()) + ".mp4"
+            out_path = str(UPLOADS_DIR / file_id)
+
+            ydl_opts = {
+                "format": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "outtmpl": out_path,
+                "merge_output_format": "mp4",
+                "quiet": True,
+                "no_warnings": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get("title", "video")
+                duration = info.get("duration")
+
+            # yt-dlp may append .mp4 again if merging
+            actual_path = out_path
+            if not Path(actual_path).exists() and Path(out_path + ".mp4").exists():
+                actual_path = out_path + ".mp4"
+                file_id = Path(actual_path).name
+
+            if not duration:
+                try:
+                    duration = get_duration(actual_path)
+                except Exception:
+                    duration = None
+
+            jobs[job_id] = {
+                "status": "done",
+                "result": {
+                    "file_id": file_id,
+                    "filename": f"{title}.mp4",
+                    "duration": duration,
+                    "media_url": f"/media/{file_id}",
+                },
+                "error": None,
+            }
+        except Exception as e:
+            jobs[job_id] = {"status": "error", "result": None, "error": str(e)}
+
+    background_tasks.add_task(_do_download, job_id, req.url)
+    return {"job_id": job_id, "status": "queued"}
 
 
 @app.post("/transcribe")
