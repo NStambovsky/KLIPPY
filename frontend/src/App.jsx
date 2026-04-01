@@ -19,6 +19,7 @@ export default function App() {
   const [transcribing, setTranscribing] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [seekTo, setSeekTo] = useState(0)
+  const [previewRange, setPreviewRange] = useState(null) // {start, end, label}
   const [keptSegments, setKeptSegments] = useState([])
   const [toasts, setToasts] = useState([])
   const [modelSize, setModelSize] = useState('base')
@@ -104,7 +105,11 @@ export default function App() {
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   const handleTimeUpdate = useCallback(t => setCurrentTime(t), [])
-  const handleSeek = useCallback(t => setSeekTo(t), [])
+  const handleSeek = useCallback(t => { setSeekTo(t); setPreviewRange(null) }, [])
+  const handlePreviewClip = useCallback((start, end, label) => {
+    setSeekTo(start)
+    setPreviewRange({ start, end, label })
+  }, [])
   const handleSegmentsChange = useCallback(segs => setKeptSegments(segs), [])
 
   function newFile() {
@@ -114,6 +119,7 @@ export default function App() {
     setKeptSegments([])
     setCurrentTime(0)
     setSeekTo(0)
+    setPreviewRange(null)
   }
 
   const lang = transcript?.language
@@ -250,6 +256,8 @@ export default function App() {
               onTimeUpdate={handleTimeUpdate}
               duration={uploadedFile.duration}
               isAudio={isAudio}
+              clipRange={previewRange}
+              onClipEnd={() => setPreviewRange(null)}
             />
           </div>
 
@@ -267,7 +275,8 @@ export default function App() {
             <ClipsPanel
               fileId={uploadedFile?.file_id}
               keptSegments={keptSegments}
-              onSeekToClip={handleSeek}
+              onPreviewClip={handlePreviewClip}
+              previewRange={previewRange}
               onToast={addToast}
             />
           </div>

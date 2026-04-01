@@ -35,7 +35,7 @@ const DEFAULT_SUBS = {
   font_name: 'Impact',
 }
 
-export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast }) {
+export default function ClipsPanel({ fileId, keptSegments, onPreviewClip, previewRange, onToast }) {
   const [autoClips, setAutoClips] = useState([])
   const [exportedClips, setExportedClips] = useState([])
   const [loadingAuto, setLoadingAuto] = useState(false)
@@ -313,31 +313,45 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
           )}
 
           <div className="clip-list">
-            {autoClips.map((clip, i) => (
-              <div key={i} className="clip-card">
-                <div className="clip-card-header">
-                  <span className="clip-title">{clip.title || `Clip ${i + 1}`}</span>
-                  <span className="badge badge-accent">{formatDur(clip.end - clip.start)}</span>
+            {autoClips.map((clip, i) => {
+              const isPreviewing = previewRange &&
+                Math.abs(previewRange.start - clip.start) < 0.1 &&
+                Math.abs(previewRange.end - clip.end) < 0.1
+              return (
+                <div key={i} className={`clip-card ${isPreviewing ? 'clip-card-active' : ''}`}>
+                  <div className="clip-card-header">
+                    <span className="clip-title">{clip.title || `Clip ${i + 1}`}</span>
+                    <div style={{display:'flex',gap:4,alignItems:'center'}}>
+                      {isPreviewing && <span className="preview-live-dot" title="Now previewing" />}
+                      <span className="badge badge-accent">{formatDur(clip.end - clip.start)}</span>
+                    </div>
+                  </div>
+                  <div className="clip-meta">
+                    {formatTime(clip.start)} – {formatTime(clip.end)}
+                    <span className="clip-score">score {(clip.score * 100).toFixed(0)}%</span>
+                  </div>
+                  <p className="clip-preview">{clip.text?.slice(0, 100)}{clip.text?.length > 100 ? '…' : ''}</p>
+                  <div className="clip-actions">
+                    <button
+                      className={isPreviewing ? 'btn-secondary' : 'btn-ghost'}
+                      onClick={() => isPreviewing
+                        ? onPreviewClip(null)
+                        : onPreviewClip(clip.start, clip.end, clip.title || `Clip ${i + 1}`)
+                      }
+                    >
+                      {isPreviewing ? '■ Stop' : '▶ Preview'}
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => exportAutoClip(clip, i)}
+                      disabled={exportingId === i}
+                    >
+                      {exportingId === i ? <><span className="spinner" /> …</> : '⬇ Export'}
+                    </button>
+                  </div>
                 </div>
-                <div className="clip-meta">
-                  {formatTime(clip.start)} – {formatTime(clip.end)}
-                  <span className="clip-score">score {(clip.score * 100).toFixed(0)}%</span>
-                </div>
-                <p className="clip-preview">{clip.text?.slice(0, 100)}{clip.text?.length > 100 ? '…' : ''}</p>
-                <div className="clip-actions">
-                  <button className="btn-ghost" onClick={() => onSeekToClip(clip.start)} title="Preview">
-                    ▶ Preview
-                  </button>
-                  <button
-                    className="btn-secondary"
-                    onClick={() => exportAutoClip(clip, i)}
-                    disabled={exportingId === i}
-                  >
-                    {exportingId === i ? <><span className="spinner" /> …</> : '⬇ Export'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
@@ -423,6 +437,12 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
           transition: background 0.1s;
         }
         .clip-card:hover { background: var(--surface2); }
+        .clip-card-active { background: var(--accent-muted) !important; border-left: 2px solid var(--accent); }
+        .preview-live-dot {
+          width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0;
+          animation: pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
         .clip-card-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 3px; }
         .clip-title { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .clip-meta { font-size: 10px; color: var(--text-dim); display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }

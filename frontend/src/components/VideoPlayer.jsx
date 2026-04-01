@@ -1,39 +1,75 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 
 function formatTime(s) {
-  if (!isFinite(s)) return '0:00'
+  if (!isFinite(s) || s == null) return '0:00'
   const m = Math.floor(s / 60)
   const sec = Math.floor(s % 60)
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-export default function VideoPlayer({ mediaUrl, currentTime, onTimeUpdate, duration, isAudio }) {
+/**
+ * VideoPlayer
+ * Props:
+ *   mediaUrl        — src for the media element
+ *   currentTime     — seek-to value from parent (transcript clicks)
+ *   onTimeUpdate    — callback(t) on every timeupdate
+ *   duration        — initial duration hint
+ *   isAudio         — render audio UI
+ *   clipRange       — {start, end, label} — highlight range, auto-play, auto-stop
+ *   onClipEnd       — called when clip finishes playing (to clear preview state)
+ */
+export default function VideoPlayer({
+  mediaUrl, currentTime, onTimeUpdate, duration, isAudio,
+  clipRange, onClipEnd,
+}) {
   const mediaRef = useRef(null)
+  const seekTrackRef = useRef(null)
   const [playing, setPlaying] = useState(false)
   const [vol, setVol] = useState(1)
   const [localTime, setLocalTime] = useState(0)
   const [localDuration, setLocalDuration] = useState(duration || 0)
-  const seekingRef = useRef(false)
+  const [dragging, setDragging] = useState(false)
+  const externalSeekRef = useRef(false)
+  const clipRangeRef = useRef(clipRange)
+  clipRangeRef.current = clipRange
 
-  // Seek when parent changes currentTime (transcript click)
+  // ── Seek from transcript click ─────────────────────────────────────────────
   useEffect(() => {
     const el = mediaRef.current
-    if (!el || seekingRef.current) return
+    if (!el || dragging) return
     if (Math.abs(el.currentTime - currentTime) > 0.3) {
+      externalSeekRef.current = true
       el.currentTime = currentTime
     }
   }, [currentTime])
 
+  // ── When clipRange changes: seek to start and autoplay ────────────────────
+  useEffect(() => {
+    const el = mediaRef.current
+    if (!el || !clipRange) return
+    el.currentTime = clipRange.start
+    el.play().catch(() => {})
+  }, [clipRange])
+
+  // ── Event listeners ────────────────────────────────────────────────────────
   useEffect(() => {
     const el = mediaRef.current
     if (!el) return
 
     function onTU() {
-      setLocalTime(el.currentTime)
-      onTimeUpdate(el.currentTime)
+      const t = el.currentTime
+      setLocalTime(t)
+      onTimeUpdate(t)
+      // Auto-stop at clip end
+      const cr = clipRangeRef.current
+      if (cr && t >= cr.end) {
+        el.pause()
+        el.currentTime = cr.end
+        onClipEnd?.()
+      }
     }
-    function onPlay() { setPlaying(true) }
-    function onPause() { setPlaying(false) }
+    function onPlay()   { setPlaying(true)  }
+    function onPause()  { setPlaying(false) }
     function onLoaded() { setLocalDuration(el.duration) }
 
     el.addEventListener('timeupdate', onTU)
@@ -46,24 +82,55 @@ export default function VideoPlayer({ mediaUrl, currentTime, onTimeUpdate, durat
       el.removeEventListener('pause', onPause)
       el.removeEventListener('loadedmetadata', onLoaded)
     }
-  }, [onTimeUpdate])
+  }, [onTimeUpdate, onClipEnd])
 
   function togglePlay() {
     const el = mediaRef.current
     if (!el) return
-    playing ? el.pause() : el.play()
+    if (playing) {
+      el.pause()
+    } else {
+      // If a clip range is set and we're past the end, restart at beginning
+      if (clipRangeRef.current && el.currentTime >= clipRangeRef.current.end) {
+        el.currentTime = clipRangeRef.current.start
+      }
+      el.play().catch(() => {})
+    }
   }
+
+  // ── Custom seekbar ─────────────────────────────────────────────────────────
+  function seekFromX(clientX) {
+    const el = mediaRef.current
+    const track = seekTrackRef.current
+    if (!el || !track || !localDuration) return
+    const rect = track.getBoundingClientRect()
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    const t = pct * localDuration
+    el.currentTime = t
+    setLocalTime(t)
+  }
+
+  function onTrackMouseDown(e) {
+    setDragging(true)
+    seekFromX(e.clientX)
+  }
+
+  useEffect(() => {
+    if (!dragging) return
+    function onMove(e) { seekFromX(e.clientX) }
+    function onUp()   { setDragging(false) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [dragging, localDuration])
 
   function onVolChange(e) {
     const v = parseFloat(e.target.value)
     setVol(v)
     if (mediaRef.current) mediaRef.current.volume = v
-  }
-
-  function onSeek(e) {
-    const v = parseFloat(e.target.value)
-    setLocalTime(v)
-    if (mediaRef.current) mediaRef.current.currentTime = v
   }
 
   function skip(delta) {
@@ -72,7 +139,10 @@ export default function VideoPlayer({ mediaUrl, currentTime, onTimeUpdate, durat
     el.currentTime = Math.max(0, Math.min(localDuration, el.currentTime + delta))
   }
 
-  const pct = localDuration > 0 ? (localTime / localDuration) * 100 : 0
+  const dur = localDuration || 1
+  const timePct  = (localTime / dur) * 100
+  const clipLeft  = clipRange ? (clipRange.start / dur) * 100 : 0
+  const clipWidth = clipRange ? ((clipRange.end - clipRange.start) / dur) * 100 : 0
 
   return (
     <div className="video-player">
@@ -94,23 +164,37 @@ export default function VideoPlayer({ mediaUrl, currentTime, onTimeUpdate, durat
         />
       )}
 
+      {/* Clip preview banner */}
+      {clipRange && (
+        <div className="clip-preview-banner">
+          <span className="clip-preview-dot" />
+          Previewing: {clipRange.label || `${formatTime(clipRange.start)} – ${formatTime(clipRange.end)}`}
+          <span style={{marginLeft:'auto', fontSize:10, opacity:0.7}}>
+            {formatTime(clipRange.end - clipRange.start)}
+          </span>
+        </div>
+      )}
+
       {/* Controls */}
       <div className="player-controls">
+        {/* Custom seekbar */}
         <div className="seek-row">
           <span className="time-label">{formatTime(localTime)}</span>
-          <input
-            type="range"
-            className="seek-slider"
-            min={0}
-            max={localDuration || 0}
-            step={0.05}
-            value={localTime}
-            onChange={onSeek}
-            onMouseDown={() => { seekingRef.current = true }}
-            onMouseUp={() => { seekingRef.current = false }}
-          />
-          <span className="time-label">{formatTime(localDuration)}</span>
+          <div
+            className="seek-track"
+            ref={seekTrackRef}
+            onMouseDown={onTrackMouseDown}
+          >
+            <div className="seek-bg" />
+            {clipRange && (
+              <div className="seek-clip-range" style={{ left: `${clipLeft}%`, width: `${clipWidth}%` }} />
+            )}
+            <div className="seek-played" style={{ width: `${timePct}%` }} />
+            <div className="seek-thumb" style={{ left: `${timePct}%` }} />
+          </div>
+          <span className="time-label" style={{textAlign:'right'}}>{formatTime(localDuration)}</span>
         </div>
+
         <div className="ctrl-row">
           <button className="btn-ghost ctrl-btn" onClick={() => skip(-5)} title="Back 5s">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -139,35 +223,64 @@ export default function VideoPlayer({ mediaUrl, currentTime, onTimeUpdate, durat
           </button>
 
           <div className="vol-ctrl">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{opacity:0.5}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{opacity:0.5,flexShrink:0}}>
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
               {vol > 0 && <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>}
             </svg>
-            <input type="range" min={0} max={1} step={0.05} value={vol} onChange={onVolChange} style={{width:64}} />
+            <input type="range" min={0} max={1} step={0.05} value={vol} onChange={onVolChange} style={{width:60}} />
           </div>
         </div>
       </div>
 
       <style>{`
-        .video-player {
-          display: flex; flex-direction: column;
-          flex: 1; background: #000; min-height: 0;
+        .video-player { display: flex; flex-direction: column; flex: 1; background: #000; min-height: 0; }
+        .video-el { flex: 1; min-height: 0; width: 100%; object-fit: contain; cursor: pointer; background: #000; }
+        .audio-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--surface2); }
+
+        .clip-preview-banner {
+          display: flex; align-items: center; gap: 7px;
+          background: var(--accent-muted); border-top: 1px solid var(--accent);
+          padding: 5px 14px; font-size: 11px; color: var(--accent-hover);
+          font-weight: 500; flex-shrink: 0;
         }
-        .video-el {
-          flex: 1; min-height: 0; width: 100%; object-fit: contain;
-          cursor: pointer; background: #000;
+        .clip-preview-dot {
+          width: 6px; height: 6px; border-radius: 50%;
+          background: var(--accent); flex-shrink: 0;
+          animation: pulse 1.2s ease-in-out infinite;
         }
-        .audio-placeholder {
-          flex: 1; display: flex; align-items: center; justify-content: center;
-          background: var(--surface2);
-        }
-        .player-controls {
-          background: var(--surface); border-top: 1px solid var(--border);
-          padding: 8px 14px; display: flex; flex-direction: column; gap: 6px;
-          flex-shrink: 0;
-        }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        .player-controls { background: var(--surface); border-top: 1px solid var(--border); padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+
+        /* Custom seekbar */
         .seek-row { display: flex; align-items: center; gap: 8px; }
-        .seek-slider { flex: 1; cursor: pointer; }
+        .seek-track {
+          flex: 1; height: 20px; position: relative;
+          display: flex; align-items: center; cursor: pointer;
+        }
+        .seek-bg {
+          position: absolute; inset: 50% 0; transform: translateY(-50%);
+          height: 4px; background: var(--surface3); border-radius: 99px;
+        }
+        .seek-clip-range {
+          position: absolute; top: 50%; transform: translateY(-50%);
+          height: 4px; background: var(--accent); opacity: 0.35;
+          border-radius: 99px; pointer-events: none;
+        }
+        .seek-played {
+          position: absolute; top: 50%; transform: translateY(-50%);
+          height: 4px; background: var(--text-muted);
+          border-radius: 99px; pointer-events: none; max-width: 100%;
+        }
+        .seek-thumb {
+          position: absolute; top: 50%; transform: translate(-50%, -50%);
+          width: 12px; height: 12px; border-radius: 50%;
+          background: #fff; pointer-events: none;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+          transition: transform 0.1s;
+        }
+        .seek-track:hover .seek-thumb { transform: translate(-50%, -50%) scale(1.3); }
+
         .time-label { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 36px; }
         .ctrl-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
         .ctrl-btn { display: flex; align-items: center; gap: 3px; padding: 6px 10px; }
