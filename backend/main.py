@@ -216,32 +216,30 @@ async def download_url(req: DownloadURLRequest, background_tasks: BackgroundTask
                 "no_warnings": True,
             }
 
-            # Try browsers in order for cookie auth (fixes YouTube 403).
-            # safari is last — macOS sandbox often blocks cookie access.
-            browsers = ["chrome", "firefox", "chromium", "edge", "safari"]
+            # First try without cookies; if blocked, retry with Firefox only
+            # (Firefox stores cookies without Keychain — no system prompts).
+            # Chrome/Chromium/Edge use macOS Keychain and trigger access dialogs.
             last_err = None
             info = None
 
-            for browser in [None] + browsers:
+            for attempt in ["nocookies", "firefox"]:
                 opts = dict(base_opts)
-                if browser:
-                    opts["cookiesfrombrowser"] = (browser,)
+                if attempt == "firefox":
+                    opts["cookiesfrombrowser"] = ("firefox",)
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
                         info = ydl.extract_info(url, download=True)
                     last_err = None
                     break
                 except PermissionError as e:
-                    # macOS sandbox blocks reading browser cookie files — skip this browser
                     last_err = e
                     continue
                 except yt_dlp.utils.DownloadError as e:
                     last_err = e
-                    # Only retry on 403/login errors
                     msg = str(e).lower()
                     if "403" in msg or "forbidden" in msg or "sign in" in msg or "bot" in msg:
                         continue
-                    raise  # other errors (bad URL etc.) — don't retry
+                    raise
 
             if last_err:
                 raise last_err
