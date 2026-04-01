@@ -8,7 +8,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 
 def get_duration(file_path: str) -> float:
@@ -104,10 +104,12 @@ def export_from_word_selection(
     output_path: str,
     kept_segments: List[dict],
     temp_dir: str,
+    ass_path: Optional[str] = None,
 ) -> str:
     """
     Export video/audio from a list of kept time ranges.
     kept_segments: [{"start": float, "end": float}, ...]
+    ass_path: optional path to an ASS subtitle file to burn in.
     """
     if not kept_segments:
         raise ValueError("No segments to export")
@@ -125,7 +127,17 @@ def export_from_word_selection(
         extract_clip(input_path, clip_path, seg["start"], seg["end"], audio_only=audio_only)
         clip_files.append(clip_path)
 
-    result = concatenate_clips(clip_files, output_path)
+    if ass_path and not audio_only:
+        # Concatenate first, then burn subtitles in one pass
+        concat_path = os.path.join(temp_dir, "_concat_nosub.mp4")
+        concatenate_clips(clip_files, concat_path)
+        _burn_subtitles(concat_path, output_path, ass_path)
+        try:
+            os.unlink(concat_path)
+        except Exception:
+            pass
+    else:
+        concatenate_clips(clip_files, output_path)
 
     for f in clip_files:
         try:
@@ -133,4 +145,23 @@ def export_from_word_selection(
         except Exception:
             pass
 
-    return result
+    return output_path
+
+
+def _burn_subtitles(input_path: str, output_path: str, ass_path: str) -> str:
+    """Burn an ASS subtitle file into a video using ffmpeg."""
+    # Escape the ass path for the filter — colons and backslashes need escaping
+    safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", f"ass={safe_ass}",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg subtitle burn error: {result.stderr}")
+    return output_path

@@ -24,15 +24,32 @@ function formatSize(bytes) {
  *  1. Auto-clip suggestions (from /auto-clip)
  *  2. Exported clips (from /clips)
  */
+const DEFAULT_SUBS = {
+  enabled: false,
+  style: 'word',
+  position: 'bottom',
+  font_size: 72,
+  all_caps: true,
+  outline_size: 2.5,
+  max_chars: 28,
+  font_name: 'Impact',
+}
+
 export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast }) {
   const [autoClips, setAutoClips] = useState([])
   const [exportedClips, setExportedClips] = useState([])
   const [loadingAuto, setLoadingAuto] = useState(false)
-  const [exportingJob, setExportingJob] = useState(null) // {jobId, outputName}
-  const [exportingId, setExportingId] = useState(null) // which clip is being exported
+  const [exportingJob, setExportingJob] = useState(null)
+  const [exportingId, setExportingId] = useState(null)
   const [numClips, setNumClips] = useState(5)
   const [targetDur, setTargetDur] = useState(60)
-  const [tab, setTab] = useState('auto') // 'auto' | 'exports'
+  const [tab, setTab] = useState('auto')
+  const [subs, setSubs] = useState(DEFAULT_SUBS)
+  const [subsOpen, setSubsOpen] = useState(false)
+
+  function setSub(key, val) {
+    setSubs(s => ({ ...s, [key]: val }))
+  }
 
   // Load exported clips on mount and after export
   const loadExports = useCallback(async () => {
@@ -85,6 +102,7 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
           file_id: fileId,
           kept_segments: keptSegments,
           output_name: `edit_${Date.now()}`,
+          subtitles: subs,
         }),
       })
       const data = await safeJson(res)
@@ -111,6 +129,7 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
           file_id: fileId,
           kept_segments: [{ start: clip.start, end: clip.end }],
           output_name: `autoclip_${idx + 1}_${Date.now()}`,
+          subtitles: subs,
         }),
       })
       const data = await safeJson(res)
@@ -158,6 +177,74 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
 
   return (
     <div className="clips-panel">
+      {/* Subtitle settings */}
+      <div className="subs-section">
+        <div className="subs-header" onClick={() => setSubsOpen(o => !o)}>
+          <span className="subs-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/>
+            </svg>
+            Captions
+          </span>
+          <label className="toggle" onClick={e => e.stopPropagation()}>
+            <input type="checkbox" checked={subs.enabled} onChange={e => { setSub('enabled', e.target.checked); setSubsOpen(e.target.checked) }} />
+            <span className="toggle-slider" />
+          </label>
+          <span className="subs-chevron">{subsOpen ? '▴' : '▾'}</span>
+        </div>
+
+        {subsOpen && (
+          <div className="subs-body">
+            <div className="sub-row">
+              <span>Style</span>
+              <div className="seg-btns">
+                <button className={`seg-btn ${subs.style === 'word' ? 'active' : ''}`} onClick={() => setSub('style', 'word')}>Word</button>
+                <button className={`seg-btn ${subs.style === 'sentence' ? 'active' : ''}`} onClick={() => setSub('style', 'sentence')}>Sentence</button>
+              </div>
+            </div>
+            <div className="sub-row">
+              <span>Position</span>
+              <div className="seg-btns">
+                {['bottom','middle','top'].map(p => (
+                  <button key={p} className={`seg-btn ${subs.position === p ? 'active' : ''}`} onClick={() => setSub('position', p)}>
+                    {p[0].toUpperCase() + p.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="sub-row">
+              <span>Font size <b>{subs.font_size}px</b></span>
+              <input type="range" min={40} max={120} step={4} value={subs.font_size} onChange={e => setSub('font_size', +e.target.value)} style={{width:100}} />
+            </div>
+            <div className="sub-row">
+              <span>Outline <b>{subs.outline_size}</b></span>
+              <input type="range" min={1} max={6} step={0.5} value={subs.outline_size} onChange={e => setSub('outline_size', +e.target.value)} style={{width:100}} />
+            </div>
+            <div className="sub-row">
+              <span>Max chars/line <b>{subs.max_chars}</b></span>
+              <input type="range" min={10} max={50} step={2} value={subs.max_chars} onChange={e => setSub('max_chars', +e.target.value)} style={{width:100}} />
+            </div>
+            <div className="sub-row">
+              <span>ALL CAPS</span>
+              <label className="toggle">
+                <input type="checkbox" checked={subs.all_caps} onChange={e => setSub('all_caps', e.target.checked)} />
+                <span className="toggle-slider" />
+              </label>
+            </div>
+            <div className="sub-row">
+              <span>Font</span>
+              <select value={subs.font_name} onChange={e => setSub('font_name', e.target.value)} className="sub-select">
+                <option value="Impact">Impact</option>
+                <option value="Arial">Arial</option>
+                <option value="Helvetica">Helvetica</option>
+                <option value="Arial Black">Arial Black</option>
+                <option value="Futura">Futura</option>
+              </select>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Export current edit button always visible */}
       <div className="export-edit-bar">
         <button
@@ -168,7 +255,7 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
           {exportingId === 'edit' ? (
             <><span className="spinner" /> Exporting…</>
           ) : (
-            <>⬇ Export Edit</>
+            <>⬇ Export Edit {subs.enabled ? '+ Captions' : ''}</>
           )}
         </button>
         <span style={{fontSize:11, color:'var(--text-dim)', marginTop:2}}>
@@ -343,6 +430,48 @@ export default function ClipsPanel({ fileId, keptSegments, onSeekToClip, onToast
         .clip-preview { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin-bottom: 6px; }
         .clip-actions { display: flex; gap: 5px; }
         .clip-actions button, .clip-actions a { font-size: 11px; padding: 4px 8px; }
+
+        /* Subtitles section */
+        .subs-section { border-bottom: 1px solid var(--border); flex-shrink: 0; }
+        .subs-header {
+          display: flex; align-items: center; gap: 7px;
+          padding: 9px 12px; cursor: pointer;
+          transition: background 0.1s; user-select: none;
+        }
+        .subs-header:hover { background: var(--surface2); }
+        .subs-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); flex: 1; }
+        .subs-chevron { font-size: 10px; color: var(--text-dim); }
+        .subs-body { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 9px; background: var(--surface2); }
+        .sub-row { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-muted); }
+        .sub-row b { color: var(--text); }
+        .sub-row input[type=range] { cursor: pointer; }
+        .seg-btns { display: flex; gap: 3px; }
+        .seg-btn {
+          font-size: 10px; padding: 3px 8px; border-radius: 4px;
+          background: var(--surface3); border: 1px solid var(--border);
+          color: var(--text-muted); cursor: pointer; transition: all 0.1s;
+        }
+        .seg-btn:hover { border-color: var(--accent); color: var(--text); }
+        .seg-btn.active { background: var(--accent-muted); border-color: var(--accent); color: var(--accent-hover); }
+        .sub-select {
+          background: var(--surface3); border: 1px solid var(--border);
+          color: var(--text); border-radius: 5px; padding: 2px 5px; font-size: 11px; cursor: pointer;
+        }
+        /* Toggle switch */
+        .toggle { position: relative; display: inline-flex; width: 32px; height: 18px; flex-shrink: 0; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+          position: absolute; inset: 0; background: var(--surface3);
+          border-radius: 99px; border: 1px solid var(--border);
+          transition: background 0.2s; cursor: pointer;
+        }
+        .toggle-slider::before {
+          content: ''; position: absolute; width: 12px; height: 12px;
+          background: var(--text-muted); border-radius: 50%;
+          top: 2px; left: 2px; transition: all 0.2s;
+        }
+        .toggle input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+        .toggle input:checked + .toggle-slider::before { transform: translateX(14px); background: #fff; }
       `}</style>
     </div>
   )

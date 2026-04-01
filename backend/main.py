@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from transcriber import transcribe, save_transcript, load_transcript
 from processor import export_from_word_selection, get_duration
 from clipper import find_clip_windows, remove_filler_words
+from subtitles import build_ass, write_ass_file
 
 # ---------------------------------------------------------------------------
 # Directory layout
@@ -69,10 +70,22 @@ def _file_id_from_upload(filename: str) -> str:
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+class SubtitleConfig(BaseModel):
+    enabled: bool = False
+    style: str = "word"          # "word" | "sentence"
+    position: str = "bottom"     # "bottom" | "top" | "middle"
+    font_size: int = 72
+    all_caps: bool = True
+    outline_size: float = 2.5
+    max_chars: int = 28
+    font_name: str = "Impact"
+
+
 class ExportRequest(BaseModel):
     file_id: str
     kept_segments: List[dict]  # [{"start": float, "end": float}]
     output_name: Optional[str] = None
+    subtitles: Optional[SubtitleConfig] = None
 
 
 class AutoClipRequest(BaseModel):
@@ -106,14 +119,43 @@ def _run_transcription(job_id: str, file_path: str, transcript_path: str, model_
         jobs[job_id] = {"status": "error", "result": None, "error": str(e)}
 
 
-def _run_export(job_id: str, input_path: str, output_path: str, kept_segments: list):
+def _run_export(
+    job_id: str,
+    input_path: str,
+    output_path: str,
+    kept_segments: list,
+    subtitle_config: Optional[dict] = None,
+    transcript: Optional[dict] = None,
+):
+    ass_path = None
     try:
         jobs[job_id] = {"status": "running", "result": None, "error": None}
-        export_from_word_selection(input_path, output_path, kept_segments, str(TEMP_DIR))
+
+        if subtitle_config and subtitle_config.get("enabled") and transcript:
+            ass_content = build_ass(
+                transcript=transcript,
+                kept_segments=kept_segments,
+                font_size=subtitle_config.get("font_size", 72),
+                position=subtitle_config.get("position", "bottom"),
+                style=subtitle_config.get("style", "word"),
+                all_caps=subtitle_config.get("all_caps", True),
+                outline_size=subtitle_config.get("outline_size", 2.5),
+                max_chars=subtitle_config.get("max_chars", 28),
+                font_name=subtitle_config.get("font_name", "Impact"),
+            )
+            ass_path = write_ass_file(ass_content, str(TEMP_DIR))
+
+        export_from_word_selection(input_path, output_path, kept_segments, str(TEMP_DIR), ass_path=ass_path)
         clip_name = Path(output_path).name
         jobs[job_id] = {"status": "done", "result": {"clip_name": clip_name}, "error": None}
     except Exception as e:
         jobs[job_id] = {"status": "error", "result": None, "error": str(e)}
+    finally:
+        if ass_path:
+            try:
+                os.unlink(ass_path)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -287,11 +329,21 @@ async def export_clip(req: ExportRequest, background_tasks: BackgroundTasks):
     output_name = f"{name}{ext}"
     output_path = CLIPS_DIR / output_name
 
+    # Load transcript if subtitles are requested
+    transcript = None
+    if req.subtitles and req.subtitles.enabled:
+        transcript_path = TRANSCRIPTS_DIR / f"{req.file_id}.json"
+        if transcript_path.exists():
+            transcript = load_transcript(str(transcript_path))
+
+    subtitle_dict = req.subtitles.model_dump() if req.subtitles else None
+
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "queued", "result": None, "error": None}
 
     background_tasks.add_task(
-        _run_export, job_id, str(file_path), str(output_path), req.kept_segments
+        _run_export, job_id, str(file_path), str(output_path),
+        req.kept_segments, subtitle_dict, transcript,
     )
     return {"job_id": job_id, "status": "queued", "output_name": output_name}
 
