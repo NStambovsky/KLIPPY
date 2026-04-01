@@ -150,12 +150,27 @@ def export_from_word_selection(
 
 def _burn_subtitles(input_path: str, output_path: str, ass_path: str) -> str:
     """Burn an ASS subtitle file into a video using ffmpeg."""
-    # Escape the ass path for the filter — colons and backslashes need escaping
-    safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    import platform
+
+    # For ffmpeg's filtergraph, colons and backslashes must be escaped.
+    # Spaces are fine since we write ASS files to /tmp.
+    def esc(p):
+        return p.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+    # Hint libass where to find system fonts (Impact, etc.)
+    font_dirs = {
+        "Darwin": "/Library/Fonts:/System/Library/Fonts",
+        "Linux":  "/usr/share/fonts:/usr/local/share/fonts",
+    }.get(platform.system(), "")
+
+    filter_val = f"ass={esc(ass_path)}"
+    if font_dirs:
+        filter_val += f":fontsdir={esc(font_dirs)}"
+
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
-        "-vf", f"ass={safe_ass}",
+        "-vf", filter_val,
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-c:a", "copy",
         "-movflags", "+faststart",
@@ -163,5 +178,7 @@ def _burn_subtitles(input_path: str, output_path: str, ass_path: str) -> str:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg subtitle burn error: {result.stderr}")
+        # Surface the relevant part of the ffmpeg log
+        stderr_tail = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
+        raise RuntimeError(f"ffmpeg subtitle error:\n{stderr_tail}")
     return output_path

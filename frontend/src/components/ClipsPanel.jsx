@@ -24,32 +24,18 @@ function formatSize(bytes) {
  *  1. Auto-clip suggestions (from /auto-clip)
  *  2. Exported clips (from /clips)
  */
-const DEFAULT_SUBS = {
-  enabled: false,
-  style: 'word',
-  position: 'bottom',
-  font_size: 72,
-  all_caps: true,
-  outline_size: 2.5,
-  max_chars: 28,
-  font_name: 'Impact',
-}
-
-export default function ClipsPanel({ fileId, keptSegments, onPreviewClip, previewRange, onToast }) {
+export default function ClipsPanel({ fileId, keptSegments, onPreviewClip, previewRange, subtitleConfig, onSubtitleConfigChange, onToast }) {
   const [autoClips, setAutoClips] = useState([])
   const [exportedClips, setExportedClips] = useState([])
   const [loadingAuto, setLoadingAuto] = useState(false)
-  const [exportingJob, setExportingJob] = useState(null)
   const [exportingId, setExportingId] = useState(null)
   const [numClips, setNumClips] = useState(5)
   const [targetDur, setTargetDur] = useState(60)
   const [tab, setTab] = useState('auto')
-  const [subs, setSubs] = useState(DEFAULT_SUBS)
   const [subsOpen, setSubsOpen] = useState(false)
 
-  function setSub(key, val) {
-    setSubs(s => ({ ...s, [key]: val }))
-  }
+  const subs = subtitleConfig
+  function setSub(key, val) { onSubtitleConfigChange(s => ({ ...s, [key]: val })) }
 
   // Load exported clips on mount and after export
   const loadExports = useCallback(async () => {

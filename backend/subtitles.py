@@ -141,12 +141,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + "\n".join(dialogues) + "\n"
 
 
-def write_ass_file(content: str, directory: str) -> str:
-    """Write ASS content to a temp file and return its path."""
-    path = os.path.join(directory, f"_subs_{os.getpid()}.ass")
-    with open(path, "w", encoding="utf-8") as f:
+def write_ass_file(content: str, directory: str = None) -> str:
+    """Write ASS content to a temp file with no spaces in path and return its path."""
+    import tempfile
+    # Always use /tmp — avoids path-with-spaces issues in ffmpeg filtergraph
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".ass", delete=False,
+        dir="/tmp", encoding="utf-8"
+    ) as f:
         f.write(content)
-    return path
+        return f.name
 
 
 def _wrap_text(text: str, max_chars: int) -> str:

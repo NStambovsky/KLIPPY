@@ -19,7 +19,12 @@ export default function App() {
   const [transcribing, setTranscribing] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [seekTo, setSeekTo] = useState(0)
-  const [previewRange, setPreviewRange] = useState(null) // {start, end, label}
+  const [previewRange, setPreviewRange] = useState(null)
+  const [subtitleConfig, setSubtitleConfig] = useState({
+    enabled: false, style: 'word', position: 'bottom',
+    font_size: 72, all_caps: true, outline_size: 2.5,
+    max_chars: 28, font_name: 'Impact',
+  })
   const [keptSegments, setKeptSegments] = useState([])
   const [toasts, setToasts] = useState([])
   const [modelSize, setModelSize] = useState('base')
@@ -106,8 +111,9 @@ export default function App() {
 
   const handleTimeUpdate = useCallback(t => setCurrentTime(t), [])
   const handleSeek = useCallback(t => { setSeekTo(t); setPreviewRange(null) }, [])
+  // Preview: only set previewRange — VideoPlayer handles the seek+play itself
   const handlePreviewClip = useCallback((start, end, label) => {
-    setSeekTo(start)
+    if (start == null) { setPreviewRange(null); return }
     setPreviewRange({ start, end, label })
   }, [])
   const handleSegmentsChange = useCallback(segs => setKeptSegments(segs), [])
@@ -258,6 +264,8 @@ export default function App() {
               isAudio={isAudio}
               clipRange={previewRange}
               onClipEnd={() => setPreviewRange(null)}
+              transcript={transcript}
+              subtitleConfig={subtitleConfig}
             />
           </div>
 
@@ -277,6 +285,8 @@ export default function App() {
               keptSegments={keptSegments}
               onPreviewClip={handlePreviewClip}
               previewRange={previewRange}
+              subtitleConfig={subtitleConfig}
+              onSubtitleConfigChange={setSubtitleConfig}
               onToast={addToast}
             />
           </div>

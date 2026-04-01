@@ -20,7 +20,7 @@ function formatTime(s) {
  */
 export default function VideoPlayer({
   mediaUrl, currentTime, onTimeUpdate, duration, isAudio,
-  clipRange, onClipEnd,
+  clipRange, onClipEnd, transcript, subtitleConfig,
 }) {
   const mediaRef = useRef(null)
   const seekTrackRef = useRef(null)
@@ -29,24 +29,26 @@ export default function VideoPlayer({
   const [localTime, setLocalTime] = useState(0)
   const [localDuration, setLocalDuration] = useState(duration || 0)
   const [dragging, setDragging] = useState(false)
-  const externalSeekRef = useRef(false)
   const clipRangeRef = useRef(clipRange)
   clipRangeRef.current = clipRange
 
-  // ── Seek from transcript click ─────────────────────────────────────────────
+  // ── Transcript word click → seek (only when no preview is active) ──────────
   useEffect(() => {
     const el = mediaRef.current
-    if (!el || dragging) return
+    if (!el || dragging || clipRangeRef.current) return
     if (Math.abs(el.currentTime - currentTime) > 0.3) {
-      externalSeekRef.current = true
       el.currentTime = currentTime
     }
   }, [currentTime])
 
-  // ── When clipRange changes: seek to start and autoplay ────────────────────
+  // ── Preview clip: seek to start and play; null → pause ────────────────────
   useEffect(() => {
     const el = mediaRef.current
-    if (!el || !clipRange) return
+    if (!el) return
+    if (!clipRange) {
+      el.pause()
+      return
+    }
     el.currentTime = clipRange.start
     el.play().catch(() => {})
   }, [clipRange])
@@ -139,6 +141,31 @@ export default function VideoPlayer({
     el.currentTime = Math.max(0, Math.min(localDuration, el.currentTime + delta))
   }
 
+  // ── Caption overlay ────────────────────────────────────────────────────────
+  function getCaptionText() {
+    if (!transcript || !subtitleConfig?.enabled) return null
+    const t = localTime
+    if (subtitleConfig.style === 'word') {
+      for (const seg of transcript.segments || []) {
+        for (const w of seg.words || []) {
+          if (t >= w.start && t <= w.end + 0.05) {
+            const word = w.word.trim()
+            return subtitleConfig.all_caps ? word.toUpperCase() : word
+          }
+        }
+      }
+    } else {
+      for (const seg of transcript.segments || []) {
+        if (t >= seg.start && t <= seg.end + 0.1) {
+          const text = seg.text.trim()
+          return subtitleConfig.all_caps ? text.toUpperCase() : text
+        }
+      }
+    }
+    return null
+  }
+  const captionText = getCaptionText()
+
   const dur = localDuration || 1
   const timePct  = (localTime / dur) * 100
   const clipLeft  = clipRange ? (clipRange.start / dur) * 100 : 0
@@ -156,12 +183,22 @@ export default function VideoPlayer({
           <audio ref={mediaRef} src={mediaUrl} />
         </div>
       ) : (
-        <video
-          ref={mediaRef}
-          src={mediaUrl}
-          className="video-el"
-          onClick={togglePlay}
-        />
+        <div className="video-wrap" onClick={togglePlay}>
+          <video ref={mediaRef} src={mediaUrl} className="video-el" />
+          {captionText && subtitleConfig && (
+            <div
+              className={`caption-overlay caption-pos-${subtitleConfig.position || 'bottom'}`}
+              style={{
+                fontSize: `${subtitleConfig.font_size || 72}px`,
+                fontFamily: `${subtitleConfig.font_name || 'Impact'}, 'Arial Black', sans-serif`,
+                WebkitTextStroke: `${subtitleConfig.outline_size || 2.5}px #000`,
+                paintOrder: 'stroke fill',
+              }}
+            >
+              {captionText}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Clip preview banner */}
@@ -234,8 +271,19 @@ export default function VideoPlayer({
 
       <style>{`
         .video-player { display: flex; flex-direction: column; flex: 1; background: #000; min-height: 0; }
-        .video-el { flex: 1; min-height: 0; width: 100%; object-fit: contain; cursor: pointer; background: #000; }
+        .video-wrap { flex: 1; min-height: 0; position: relative; display: flex; cursor: pointer; background: #000; }
+        .video-el { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; display: block; }
         .audio-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--surface2); }
+        .caption-overlay {
+          position: absolute; left: 50%; transform: translateX(-50%);
+          color: #fff; font-weight: 900; text-align: center;
+          pointer-events: none; white-space: pre-wrap; max-width: 85%;
+          line-height: 1.1; letter-spacing: 0.02em;
+          text-shadow: none;
+        }
+        .caption-pos-bottom { bottom: 8%; }
+        .caption-pos-top    { top: 6%; }
+        .caption-pos-middle { top: 50%; transform: translate(-50%, -50%); }
 
         .clip-preview-banner {
           display: flex; align-items: center; gap: 7px;
