@@ -166,17 +166,41 @@ async def download_url(req: DownloadURLRequest, background_tasks: BackgroundTask
             file_id = str(uuid.uuid4()) + ".mp4"
             out_path = str(UPLOADS_DIR / file_id)
 
-            ydl_opts = {
+            base_opts = {
                 "format": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
                 "outtmpl": out_path,
                 "merge_output_format": "mp4",
                 "quiet": True,
                 "no_warnings": True,
             }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get("title", "video")
-                duration = info.get("duration")
+
+            # Try browsers in order for cookie auth (fixes YouTube 403)
+            browsers = ["safari", "chrome", "firefox", "chromium", "edge"]
+            last_err = None
+            info = None
+
+            for browser in [None] + browsers:
+                opts = dict(base_opts)
+                if browser:
+                    opts["cookiesfrombrowser"] = (browser,)
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                    last_err = None
+                    break
+                except yt_dlp.utils.DownloadError as e:
+                    last_err = e
+                    # Only retry on 403/login errors
+                    msg = str(e).lower()
+                    if "403" in msg or "forbidden" in msg or "sign in" in msg or "bot" in msg:
+                        continue
+                    raise  # other errors (bad URL etc.) — don't retry
+
+            if last_err:
+                raise last_err
+
+            title = info.get("title", "video")
+            duration = info.get("duration")
 
             # yt-dlp may append .mp4 again if merging
             actual_path = out_path
