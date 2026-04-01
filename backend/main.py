@@ -216,33 +216,8 @@ async def download_url(req: DownloadURLRequest, background_tasks: BackgroundTask
                 "no_warnings": True,
             }
 
-            # First try without cookies; if blocked, retry with Firefox only
-            # (Firefox stores cookies without Keychain — no system prompts).
-            # Chrome/Chromium/Edge use macOS Keychain and trigger access dialogs.
-            last_err = None
-            info = None
-
-            for attempt in ["nocookies", "firefox"]:
-                opts = dict(base_opts)
-                if attempt == "firefox":
-                    opts["cookiesfrombrowser"] = ("firefox",)
-                try:
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        info = ydl.extract_info(url, download=True)
-                    last_err = None
-                    break
-                except PermissionError as e:
-                    last_err = e
-                    continue
-                except yt_dlp.utils.DownloadError as e:
-                    last_err = e
-                    msg = str(e).lower()
-                    if "403" in msg or "forbidden" in msg or "sign in" in msg or "bot" in msg:
-                        continue
-                    raise
-
-            if last_err:
-                raise last_err
+            with yt_dlp.YoutubeDL(base_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
 
             title = info.get("title", "video")
             duration = info.get("duration")
