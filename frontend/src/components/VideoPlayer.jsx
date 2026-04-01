@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react'
+import React, { useRef, useEffect, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
 
 function formatTime(s) {
   if (!isFinite(s) || s == null) return '0:00'
@@ -17,14 +17,17 @@ function formatTime(s) {
  *   isAudio           — render audio UI
  *   clipRange         — {start, end, label} — highlight range + auto-stop
  *   onClipEnd         — called when clip finishes playing
- *   onRegisterSeek    — called once with an imperative seekAndPlay(start) fn
+ *   keptSegments      — [{start, end}] kept segments for edit-mode skip
  *   transcript        — for live caption overlay
  *   subtitleConfig    — caption display settings
+ *
+ * Ref methods (via forwardRef):
+ *   seekAndPlay(start) — seek to time and play (call within user gesture)
  */
-export default function VideoPlayer({
+const VideoPlayer = forwardRef(function VideoPlayer({
   mediaUrl, currentTime, onTimeUpdate, duration, isAudio,
-  clipRange, onClipEnd, onRegisterSeek, transcript, subtitleConfig,
-}) {
+  clipRange, onClipEnd, keptSegments, transcript, subtitleConfig,
+}, ref) {
   const mediaRef = useRef(null)
   const seekTrackRef = useRef(null)
   const [playing, setPlaying] = useState(false)
@@ -34,30 +37,20 @@ export default function VideoPlayer({
   const [dragging, setDragging] = useState(false)
   const clipRangeRef = useRef(clipRange)
   clipRangeRef.current = clipRange
+  const keptSegmentsRef = useRef(keptSegments)
+  keptSegmentsRef.current = keptSegments
 
-  // ── Register imperative seek function with parent ────────────────────────
-  // This is called directly on click — no React effect latency.
-  useEffect(() => {
-    if (!onRegisterSeek) return
-    onRegisterSeek((start) => {
+  // ── Expose seekAndPlay imperatively ────────────────────────────────────────
+  // Called synchronously inside a user-gesture handler so el.play() is allowed.
+  useImperativeHandle(ref, () => ({
+    seekAndPlay(start) {
       const el = mediaRef.current
       if (!el) return
-      const doPlay = () => el.play().catch(() => {})
+      // play() MUST be called within the user gesture (sync); seek after
+      el.play().catch(() => {})
       el.currentTime = start
-      if (Math.abs(el.currentTime - start) < 0.05) {
-        // Already at position (or set synchronously) — just play
-        doPlay()
-      } else {
-        // Wait for seek to complete
-        el.addEventListener('seeked', doPlay, { once: true })
-        // Safety fallback
-        setTimeout(() => {
-          el.removeEventListener('seeked', doPlay)
-          if (el.paused && clipRangeRef.current) doPlay()
-        }, 500)
-      }
-    })
-  }, [onRegisterSeek])
+    },
+  }), [])
 
   // ── Transcript word click → seek (skipped when preview is active) ─────────
   useEffect(() => {
@@ -84,12 +77,37 @@ export default function VideoPlayer({
       const t = el.currentTime
       setLocalTime(t)
       onTimeUpdate(t)
-      // Auto-stop at clip end
+
+      // Auto-stop at clip-preview end
       const cr = clipRangeRef.current
       if (cr && t >= cr.end) {
         el.pause()
         el.currentTime = cr.end
         onClipEnd?.()
+        return
+      }
+
+      // Skip over deleted sections in edit-preview mode
+      if (!cr) {
+        const segs = keptSegmentsRef.current
+        if (segs && segs.length > 0) {
+          // Check if t falls in a gap (not inside any kept segment)
+          let inKept = false
+          let nextStart = null
+          for (let i = 0; i < segs.length; i++) {
+            if (t >= segs[i].start && t <= segs[i].end + 0.05) {
+              inKept = true
+              break
+            }
+            if (t < segs[i].start) {
+              nextStart = segs[i].start
+              break
+            }
+          }
+          if (!inKept && nextStart !== null) {
+            el.currentTime = nextStart
+          }
+        }
       }
     }
     function onPlay()   { setPlaying(true)  }
@@ -114,7 +132,6 @@ export default function VideoPlayer({
     if (playing) {
       el.pause()
     } else {
-      // If a clip range is set and we're past the end, restart at beginning
       if (clipRangeRef.current && el.currentTime >= clipRangeRef.current.end) {
         el.currentTime = clipRangeRef.current.start
       }
@@ -359,4 +376,6 @@ export default function VideoPlayer({
       `}</style>
     </div>
   )
-}
+})
+
+export default VideoPlayer
