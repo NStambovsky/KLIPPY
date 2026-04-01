@@ -29,6 +29,7 @@ export default function App() {
   const [toasts, setToasts] = useState([])
   const [modelSize, setModelSize] = useState('base')
   const pollRef = useRef(null)
+  const videoSeekFnRef = useRef(null)  // imperative seek registered by VideoPlayer
 
   const isAudio = uploadedFile
     ? AUDIO_EXTS.has('.' + (uploadedFile.filename?.split('.').pop() || '').toLowerCase())
@@ -111,11 +112,11 @@ export default function App() {
 
   const handleTimeUpdate = useCallback(t => setCurrentTime(t), [])
   const handleSeek = useCallback(t => { setSeekTo(t); setPreviewRange(null) }, [])
-  // Preview: set both seekTo (triggers prop effect) and previewRange (triggers clip effect)
   const handlePreviewClip = useCallback((start, end, label) => {
     if (start == null) { setPreviewRange(null); return }
-    setSeekTo(start)
     setPreviewRange({ start, end, label })
+    // Call VideoPlayer's imperative seek directly — no effect latency
+    videoSeekFnRef.current?.(start)
   }, [])
   const handleSegmentsChange = useCallback(segs => setKeptSegments(segs), [])
 
@@ -265,6 +266,7 @@ export default function App() {
               isAudio={isAudio}
               clipRange={previewRange}
               onClipEnd={() => setPreviewRange(null)}
+              onRegisterSeek={fn => { videoSeekFnRef.current = fn }}
               transcript={transcript}
               subtitleConfig={subtitleConfig}
             />

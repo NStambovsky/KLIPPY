@@ -10,17 +10,20 @@ function formatTime(s) {
 /**
  * VideoPlayer
  * Props:
- *   mediaUrl        — src for the media element
- *   currentTime     — seek-to value from parent (transcript clicks)
- *   onTimeUpdate    — callback(t) on every timeupdate
- *   duration        — initial duration hint
- *   isAudio         — render audio UI
- *   clipRange       — {start, end, label} — highlight range, auto-play, auto-stop
- *   onClipEnd       — called when clip finishes playing (to clear preview state)
+ *   mediaUrl          — src for the media element
+ *   currentTime       — seek-to value from parent (transcript clicks)
+ *   onTimeUpdate      — callback(t) on every timeupdate
+ *   duration          — initial duration hint
+ *   isAudio           — render audio UI
+ *   clipRange         — {start, end, label} — highlight range + auto-stop
+ *   onClipEnd         — called when clip finishes playing
+ *   onRegisterSeek    — called once with an imperative seekAndPlay(start) fn
+ *   transcript        — for live caption overlay
+ *   subtitleConfig    — caption display settings
  */
 export default function VideoPlayer({
   mediaUrl, currentTime, onTimeUpdate, duration, isAudio,
-  clipRange, onClipEnd, transcript, subtitleConfig,
+  clipRange, onClipEnd, onRegisterSeek, transcript, subtitleConfig,
 }) {
   const mediaRef = useRef(null)
   const seekTrackRef = useRef(null)
@@ -32,7 +35,31 @@ export default function VideoPlayer({
   const clipRangeRef = useRef(clipRange)
   clipRangeRef.current = clipRange
 
-  // ── Transcript word click → seek (skipped when preview is active) ───────────
+  // ── Register imperative seek function with parent ────────────────────────
+  // This is called directly on click — no React effect latency.
+  useEffect(() => {
+    if (!onRegisterSeek) return
+    onRegisterSeek((start) => {
+      const el = mediaRef.current
+      if (!el) return
+      const doPlay = () => el.play().catch(() => {})
+      el.currentTime = start
+      if (Math.abs(el.currentTime - start) < 0.05) {
+        // Already at position (or set synchronously) — just play
+        doPlay()
+      } else {
+        // Wait for seek to complete
+        el.addEventListener('seeked', doPlay, { once: true })
+        // Safety fallback
+        setTimeout(() => {
+          el.removeEventListener('seeked', doPlay)
+          if (el.paused && clipRangeRef.current) doPlay()
+        }, 500)
+      }
+    })
+  }, [onRegisterSeek])
+
+  // ── Transcript word click → seek (skipped when preview is active) ─────────
   useEffect(() => {
     const el = mediaRef.current
     if (!el || dragging || clipRangeRef.current) return
@@ -41,33 +68,10 @@ export default function VideoPlayer({
     }
   }, [currentTime])
 
-  // ── Preview clip: seek to start and play; null → pause ────────────────────
+  // ── clipRange null → pause (stop preview) ────────────────────────────────
   useEffect(() => {
-    const el = mediaRef.current
-    if (!el) return
     if (!clipRange) {
-      el.pause()
-      return
-    }
-
-    function doSeekAndPlay() {
-      el.currentTime = clipRange.start
-      // Wait for the seek to complete before playing
-      el.onseeked = () => {
-        el.onseeked = null
-        el.play().catch(() => {})
-      }
-      // Fallback: if onseeked never fires (already at position), play anyway
-      setTimeout(() => {
-        if (el.paused && clipRangeRef.current) el.play().catch(() => {})
-      }, 300)
-    }
-
-    // If media metadata isn't loaded yet, wait for it
-    if (el.readyState < 1) {
-      el.addEventListener('loadedmetadata', doSeekAndPlay, { once: true })
-    } else {
-      doSeekAndPlay()
+      mediaRef.current?.pause()
     }
   }, [clipRange])
 
