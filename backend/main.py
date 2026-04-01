@@ -216,8 +216,9 @@ async def download_url(req: DownloadURLRequest, background_tasks: BackgroundTask
                 "no_warnings": True,
             }
 
-            # Try browsers in order for cookie auth (fixes YouTube 403)
-            browsers = ["safari", "chrome", "firefox", "chromium", "edge"]
+            # Try browsers in order for cookie auth (fixes YouTube 403).
+            # safari is last — macOS sandbox often blocks cookie access.
+            browsers = ["chrome", "firefox", "chromium", "edge", "safari"]
             last_err = None
             info = None
 
@@ -230,6 +231,10 @@ async def download_url(req: DownloadURLRequest, background_tasks: BackgroundTask
                         info = ydl.extract_info(url, download=True)
                     last_err = None
                     break
+                except PermissionError as e:
+                    # macOS sandbox blocks reading browser cookie files — skip this browser
+                    last_err = e
+                    continue
                 except yt_dlp.utils.DownloadError as e:
                     last_err = e
                     # Only retry on 403/login errors
