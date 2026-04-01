@@ -39,24 +39,17 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   clipRangeRef.current = clipRange
   const keptSegmentsRef = useRef(keptSegments)
   keptSegmentsRef.current = keptSegments
-  // Suppress keptSegments skip logic between seekAndPlay() call and React re-render
-  const pendingPreviewRef = useRef(false)
-
-  // ── Clear pendingPreview once clipRange arrives from React ──────────────────
-  useEffect(() => {
-    if (clipRange) pendingPreviewRef.current = false
-  }, [clipRange])
 
   // ── Expose seekAndPlay imperatively ────────────────────────────────────────
-  // Called synchronously inside a user-gesture handler so el.play() is allowed.
+  // newClipRange is passed so clipRangeRef is updated IMMEDIATELY — before
+  // React re-renders — preventing the auto-stop logic from firing with the
+  // stale previous clip range during the transition.
   useImperativeHandle(ref, () => ({
-    seekAndPlay(start) {
+    seekAndPlay(start, newClipRange) {
+      // Update ref NOW so timeupdate sees correct range before React re-renders
+      if (newClipRange !== undefined) clipRangeRef.current = newClipRange
       const el = mediaRef.current
       if (!el) return
-      // Set flag BEFORE seeking so timeupdate skip-logic is suppressed
-      // until React re-renders with the new clipRange prop.
-      pendingPreviewRef.current = true
-      // Seek first, then play() — both sync in the user gesture context.
       el.currentTime = start
       el.play().catch(() => {})
     },
@@ -98,8 +91,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       }
 
       // Skip over deleted sections in edit-preview mode
-      // pendingPreviewRef prevents interference between seekAndPlay() and React re-render
-      if (!cr && !pendingPreviewRef.current) {
+      if (!cr) {
         const segs = keptSegmentsRef.current
         if (segs && segs.length > 0) {
           // Check if t falls in a gap (not inside any kept segment)

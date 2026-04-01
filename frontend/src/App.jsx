@@ -114,9 +114,11 @@ export default function App() {
   const handleSeek = useCallback(t => { setSeekTo(t); setPreviewRange(null) }, [])
   const handlePreviewClip = useCallback((start, end, label) => {
     if (start == null) { setPreviewRange(null); return }
-    setPreviewRange({ start, end, label })
-    // seekAndPlay must be called synchronously within the user gesture
-    videoRef.current?.seekAndPlay(start)
+    const range = { start, end, label }
+    setPreviewRange(range)
+    // Pass range so VideoPlayer can update clipRangeRef immediately,
+    // before React re-renders — prevents stale auto-stop race condition.
+    videoRef.current?.seekAndPlay(start, range)
   }, [])
   const handleSegmentsChange = useCallback(segs => setKeptSegments(segs), [])
 
