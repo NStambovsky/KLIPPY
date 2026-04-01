@@ -111,9 +111,10 @@ export default function App() {
 
   const handleTimeUpdate = useCallback(t => setCurrentTime(t), [])
   const handleSeek = useCallback(t => { setSeekTo(t); setPreviewRange(null) }, [])
-  // Preview: only set previewRange — VideoPlayer handles the seek+play itself
+  // Preview: set both seekTo (triggers prop effect) and previewRange (triggers clip effect)
   const handlePreviewClip = useCallback((start, end, label) => {
     if (start == null) { setPreviewRange(null); return }
+    setSeekTo(start)
     setPreviewRange({ start, end, label })
   }, [])
   const handleSegmentsChange = useCallback(segs => setKeptSegments(segs), [])

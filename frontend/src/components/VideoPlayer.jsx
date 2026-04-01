@@ -32,7 +32,7 @@ export default function VideoPlayer({
   const clipRangeRef = useRef(clipRange)
   clipRangeRef.current = clipRange
 
-  // ── Transcript word click → seek (only when no preview is active) ──────────
+  // ── Transcript word click → seek (skipped when preview is active) ───────────
   useEffect(() => {
     const el = mediaRef.current
     if (!el || dragging || clipRangeRef.current) return
@@ -49,8 +49,26 @@ export default function VideoPlayer({
       el.pause()
       return
     }
-    el.currentTime = clipRange.start
-    el.play().catch(() => {})
+
+    function doSeekAndPlay() {
+      el.currentTime = clipRange.start
+      // Wait for the seek to complete before playing
+      el.onseeked = () => {
+        el.onseeked = null
+        el.play().catch(() => {})
+      }
+      // Fallback: if onseeked never fires (already at position), play anyway
+      setTimeout(() => {
+        if (el.paused && clipRangeRef.current) el.play().catch(() => {})
+      }, 300)
+    }
+
+    // If media metadata isn't loaded yet, wait for it
+    if (el.readyState < 1) {
+      el.addEventListener('loadedmetadata', doSeekAndPlay, { once: true })
+    } else {
+      doSeekAndPlay()
+    }
   }, [clipRange])
 
   // ── Event listeners ────────────────────────────────────────────────────────
