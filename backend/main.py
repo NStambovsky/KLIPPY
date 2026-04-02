@@ -216,8 +216,32 @@ async def download_url(req: DownloadURLRequest, background_tasks: BackgroundTask
                 "no_warnings": True,
             }
 
-            with yt_dlp.YoutubeDL(base_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+            # YouTube 403 workaround: try alternate player clients.
+            # ios/android clients bypass bot-detection without needing cookies.
+            player_clients = [
+                ["ios"],
+                ["android"],
+                ["web"],
+            ]
+            info = None
+            last_err = None
+            for clients in player_clients:
+                opts = dict(base_opts)
+                opts["extractor_args"] = {"youtube": {"player_client": clients}}
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                    last_err = None
+                    break
+                except yt_dlp.utils.DownloadError as e:
+                    last_err = e
+                    msg = str(e).lower()
+                    if "403" in msg or "forbidden" in msg:
+                        continue
+                    raise
+
+            if last_err:
+                raise last_err
 
             title = info.get("title", "video")
             duration = info.get("duration")
