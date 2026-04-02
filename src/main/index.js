@@ -128,6 +128,139 @@ Format: Layer, Start, End, Style, Text
   return header + lines.join('\n') + '\n'
 }
 
+// drawtext-based caption burn-in (no libass needed — always available in ffmpeg)
+function escapeDrawtext(str) {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, '\u2019')  // curly apostrophe — avoids quote escaping complexity
+    .replace(/:/g, '\\:')
+    .replace(/%/g, '%%')
+}
+
+function findFontFile(fontName) {
+  const fontPaths = {
+    'Impact':      ['/System/Library/Fonts/Supplemental/Impact.ttf', '/Library/Fonts/Impact.ttf', '/usr/share/fonts/truetype/msttcorefonts/Impact.ttf'],
+    'Arial Black': ['/System/Library/Fonts/Supplemental/Arial Black.ttf', '/Library/Fonts/Arial Black.ttf'],
+    'Helvetica':   ['/System/Library/Fonts/Helvetica.ttc', '/Library/Fonts/Helvetica.ttf'],
+    'Arial':       ['/System/Library/Fonts/Supplemental/Arial.ttf', '/Library/Fonts/Arial.ttf', '/usr/share/fonts/truetype/msttcorefonts/Arial.ttf'],
+  }
+  for (const p of (fontPaths[fontName] || [])) {
+    if (fs.existsSync(p)) return p
+  }
+  return null
+}
+
+function buildDrawtextFilter(words, captionStyle) {
+  const { size = 72, color = '#ffffff', outlineColor = '#000000', outlineSize = 2,
+    position = 'bottom', allCaps = true, font = 'Impact' } = captionStyle
+
+  const fontColor = '0x' + (color.replace('#', '') || 'ffffff')
+  const borderColor = '0x' + (outlineColor.replace('#', '') || '000000')
+  const yExpr = position === 'top' ? '80' : position === 'middle' ? '(h-text_h)/2' : 'h-text_h-80'
+
+  const fontFile = findFontFile(font)
+  const fontPart = fontFile ? `fontfile='${escapeDrawtext(fontFile)}'` : `font='${escapeDrawtext(font)}'`
+
+  const parts = words.map((w) => {
+    const raw = (allCaps ? w.word.trim().toUpperCase() : w.word.trim())
+    if (!raw) return null
+    const text = escapeDrawtext(raw)
+    const t0 = Math.max(0, w.startMs / 1000).toFixed(3)
+    const t1 = ((w.endMs + 50) / 1000).toFixed(3)
+    return `drawtext=${fontPart}:text='${text}':fontsize=${size}:fontcolor=${fontColor}:borderw=${outlineSize}:bordercolor=${borderColor}:x=(w-text_w)/2:y=${yExpr}:enable='between(t,${t0},${t1})'`
+  }).filter(Boolean)
+
+  return parts.length ? parts.join(',') : null
+}
+
+function buildDrawtextFilterSentences(words, captionStyle) {
+  const { size = 72, color = '#ffffff', outlineColor = '#000000', outlineSize = 2,
+    position = 'bottom', allCaps = true, font = 'Impact' } = captionStyle
+
+  const fontColor = '0x' + (color.replace('#', '') || 'ffffff')
+  const borderColor = '0x' + (outlineColor.replace('#', '') || '000000')
+  const yExpr = position === 'top' ? '80' : position === 'middle' ? '(h-text_h)/2' : 'h-text_h-80'
+  const fontFile = findFontFile(font)
+  const fontPart = fontFile ? `fontfile='${escapeDrawtext(fontFile)}'` : `font='${escapeDrawtext(font)}'`
+
+  const parts = []
+  let sentWords = []
+  for (let i = 0; i < words.length; i++) {
+    sentWords.push(words[i])
+    const isLast = i === words.length - 1
+    const nextGap = isLast ? Infinity : (words[i + 1].startMs - words[i].endMs)
+    if (nextGap > 800 || isLast) {
+      const raw = sentWords.map((w) => w.word).join('').trim()
+      const display = allCaps ? raw.toUpperCase() : raw
+      if (display) {
+        const text = escapeDrawtext(display)
+        const t0 = Math.max(0, sentWords[0].startMs / 1000).toFixed(3)
+        const t1 = ((sentWords[sentWords.length - 1].endMs + 100) / 1000).toFixed(3)
+        parts.push(`drawtext=${fontPart}:text='${text}':fontsize=${Math.round(size * 0.6)}:fontcolor=${fontColor}:borderw=${outlineSize}:bordercolor=${borderColor}:x=(w-text_w)/2:y=${yExpr}:enable='between(t,${t0},${t1})'`)
+      }
+      sentWords = []
+    }
+  }
+  return parts.length ? parts.join(',') : null
+}
+
+// Burn captions into srcPath → dstPath using libass or drawtext fallback
+// Returns null on success, or a warning string if captions were skipped
+async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType, progressBase, progressRange, win) {
+  const totalSec = words.length > 0 ? (words[words.length - 1].endMs / 1000) + 1 : 1
+  const tmpDir = path.join(os.tmpdir(), 'klippy')
+
+  const sendProg = (frac) => win.webContents.send('progress', { type: progressType, progress: progressBase + frac * progressRange })
+
+  // Try libass subtitles filter first
+  if (await hasSubtitlesFilter()) {
+    const assContent = buildAssFile(words, captionStyle)
+    const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
+    fs.writeFileSync(assPath, assContent, 'utf8')
+    sendProg(0)
+    try {
+      await spawnPromise(ffmpegPath,
+        ['-y', '-i', srcPath, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', dstPath],
+        (chunk) => {
+          const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+          if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
+        }
+      )
+      try { fs.unlinkSync(assPath) } catch {}
+      return null  // success
+    } catch {
+      try { fs.unlinkSync(assPath) } catch {}
+      // fall through to drawtext
+    }
+  }
+
+  // Fallback: drawtext (no libass needed, always available)
+  const vfFilter = captionStyle.mode === 'sentence'
+    ? buildDrawtextFilterSentences(words, captionStyle)
+    : buildDrawtextFilter(words, captionStyle)
+
+  if (!vfFilter) {
+    fs.copyFileSync(srcPath, dstPath)
+    return 'No caption words found in range.'
+  }
+
+  sendProg(0)
+  try {
+    await spawnPromise(ffmpegPath,
+      ['-y', '-i', srcPath, '-vf', vfFilter, '-c:a', 'copy', '-movflags', '+faststart', dstPath],
+      (chunk) => {
+        const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+        if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
+      }
+    )
+    return null  // success with drawtext
+  } catch (e) {
+    // Both methods failed — copy without captions
+    fs.copyFileSync(srcPath, dstPath)
+    return `Caption burn-in failed: ${e.message.split('\n')[0]}`
+  }
+}
+
 // Remap transcript words to a new timeline defined by kept segments
 function remapWordsToSegments(transcript, segments) {
   const result = []
@@ -415,36 +548,10 @@ function registerHandlers(win) {
     )
 
     if (useCaptions) {
-      const canBurnCaptions = await hasSubtitlesFilter()
-      if (canBurnCaptions) {
-        const remapped = remapWordsToSegments(transcript, segments)
-        const assContent = buildAssFile(remapped, captionStyle)
-        const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
-        fs.writeFileSync(assPath, assContent, 'utf8')
-
-        win.webContents.send('progress', { type: 'exporting', progress: 0.65 })
-        try {
-          await spawnPromise(ffmpegPath,
-            ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
-            (chunk) => {
-              const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
-              if (m && totalSec > 0) {
-                const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
-                win.webContents.send('progress', { type: 'exporting', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
-              }
-            }
-          )
-        } catch (captionErr) {
-          // Burn-in failed — save without captions and warn
-          fs.copyFileSync(exportTarget, result.filePath)
-          win.webContents.send('captionWarning', `Caption burn-in failed: ${captionErr.message.split('\n')[0]}. Run: brew reinstall ffmpeg`)
-        }
-        try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
-      } else {
-        // No libass — still save the video, just without burned captions
-        fs.renameSync(exportTarget, result.filePath)
-        win.webContents.send('captionWarning', 'Caption burn-in requires ffmpeg with libass. Exported without captions. Fix: brew reinstall ffmpeg')
-      }
+      const remapped = remapWordsToSegments(transcript, segments)
+      const warn = await burnCaptions(exportTarget, result.filePath, remapped, captionStyle, 'exporting', 0.65, 0.3, win)
+      try { fs.unlinkSync(exportTarget) } catch {}
+      if (warn) win.webContents.send('captionWarning', warn)
     }
 
     win.webContents.send('progress', { type: 'exporting', progress: 1 })
@@ -484,37 +591,12 @@ function registerHandlers(win) {
     )
 
     if (useCaptions) {
-      const canBurnCaptions = await hasSubtitlesFilter()
-      if (canBurnCaptions) {
-        const clipWords = (transcript || [])
-          .filter((w) => w.startMs >= startMs - 100 && w.endMs <= endMs + 100)
-          .map((w) => ({ ...w, startMs: w.startMs - startMs, endMs: w.endMs - startMs }))
-
-        const assContent = buildAssFile(clipWords, captionStyle)
-        const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
-        fs.writeFileSync(assPath, assContent, 'utf8')
-
-        win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 })
-        try {
-          await spawnPromise(ffmpegPath,
-            ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
-            (chunk) => {
-              const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
-              if (m && totalSec > 0) {
-                const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
-                win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
-              }
-            }
-          )
-        } catch (captionErr) {
-          fs.copyFileSync(exportTarget, result.filePath)
-          win.webContents.send('captionWarning', `Caption burn-in failed: ${captionErr.message.split('\n')[0]}. Run: brew reinstall ffmpeg`)
-        }
-        try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
-      } else {
-        fs.renameSync(exportTarget, result.filePath)
-        win.webContents.send('captionWarning', 'Caption burn-in requires ffmpeg with libass. Exported without captions. Fix: brew reinstall ffmpeg')
-      }
+      const clipWords = (transcript || [])
+        .filter((w) => w.startMs >= startMs - 100 && w.endMs <= endMs + 100)
+        .map((w) => ({ ...w, startMs: w.startMs - startMs, endMs: w.endMs - startMs }))
+      const warn = await burnCaptions(exportTarget, result.filePath, clipWords, captionStyle, 'exportingClip', 0.65, 0.3, win)
+      try { fs.unlinkSync(exportTarget) } catch {}
+      if (warn) win.webContents.send('captionWarning', warn)
     }
 
     win.webContents.send('progress', { type: 'exportingClip', progress: 1 })
@@ -578,7 +660,11 @@ app.whenReady().then(() => {
   protocol.handle('media', (req) => {
     try {
       const filePath = decodeURIComponent(req.url.slice('media://'.length))
-      return net.fetch(pathToFileURL(filePath).toString())
+      // Forward Range header so the video element can seek (partial content)
+      const headers = {}
+      const range = req.headers.get('range')
+      if (range) headers['range'] = range
+      return net.fetch(pathToFileURL(filePath).toString(), { headers })
     } catch {
       return new Response('Not found', { status: 404 })
     }
