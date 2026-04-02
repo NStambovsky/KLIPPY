@@ -40,6 +40,92 @@ function saveSettings(data) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2))
 }
 
+// ─── ASS subtitle helpers ──────────────────────────────────────────────────────
+function hexToAss(hex) {
+  // '#RRGGBB' → '&H00BBGGRR'
+  const r = (hex || '#ffffff').slice(1, 3)
+  const g = (hex || '#ffffff').slice(3, 5)
+  const b = (hex || '#ffffff').slice(5, 7)
+  return `&H00${b}${g}${r}`.toUpperCase()
+}
+
+function msToAssTime(ms) {
+  const totalCs = Math.round(Math.max(0, ms) / 10)
+  const cs = totalCs % 100
+  const totalSec = Math.floor(totalCs / 100)
+  const sec = totalSec % 60
+  const totalMin = Math.floor(totalSec / 60)
+  const min = totalMin % 60
+  const hr = Math.floor(totalMin / 60)
+  return `${hr}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+}
+
+function buildAssFile(words, captionStyle) {
+  const { font = 'Impact', size = 72, color = '#ffffff', outlineColor = '#000000',
+    outlineSize = 2, position = 'bottom', mode = 'word', allCaps = true } = captionStyle
+
+  const alignment = position === 'top' ? 8 : position === 'middle' ? 5 : 2
+  const marginV = 80
+
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BorderStyle, Outline, Shadow, Alignment, MarginV
+Style: Default,${font},${size},${hexToAss(color)},${hexToAss(outlineColor)},1,${outlineSize},0,${alignment},${marginV}
+
+[Events]
+Format: Layer, Start, End, Style, Text
+`
+  const lines = []
+
+  if (mode === 'word') {
+    for (const w of words) {
+      const text = allCaps ? w.word.trim().toUpperCase() : w.word.trim()
+      if (!text) continue
+      lines.push(`Dialogue: 0,${msToAssTime(w.startMs)},${msToAssTime(w.endMs + 50)},Default,,${text}`)
+    }
+  } else {
+    let sentWords = []
+    for (let i = 0; i < words.length; i++) {
+      sentWords.push(words[i])
+      const isLast = i === words.length - 1
+      const nextGap = isLast ? Infinity : (words[i + 1].startMs - words[i].endMs)
+      if (nextGap > 800 || isLast) {
+        const text = sentWords.map((w) => w.word).join('').trim()
+        const display = allCaps ? text.toUpperCase() : text
+        if (display) {
+          lines.push(`Dialogue: 0,${msToAssTime(sentWords[0].startMs)},${msToAssTime(sentWords[sentWords.length - 1].endMs + 100)},Default,,${display}`)
+        }
+        sentWords = []
+      }
+    }
+  }
+
+  return header + lines.join('\n') + '\n'
+}
+
+// Remap transcript words to a new timeline defined by kept segments
+function remapWordsToSegments(transcript, segments) {
+  const result = []
+  let outputOffset = 0
+  for (const seg of segments) {
+    const inSeg = transcript.filter((w) => w.startMs >= seg.startMs - 50 && w.endMs <= seg.endMs + 50)
+    for (const w of inSeg) {
+      result.push({
+        ...w,
+        startMs: w.startMs - seg.startMs + outputOffset,
+        endMs: w.endMs - seg.startMs + outputOffset,
+      })
+    }
+    outputOffset += seg.endMs - seg.startMs
+  }
+  return result
+}
+
 // ─── Spawn helper ──────────────────────────────────────────────────────────────
 function spawnPromise(bin, args, onProgress) {
   return new Promise((resolve, reject) => {
@@ -257,7 +343,7 @@ function registerHandlers(win) {
   })
 
   // exportEdit — FFmpeg multi-segment concat
-  ipcMain.handle('exportEdit', async (_e, { inputPath, segments }) => {
+  ipcMain.handle('exportEdit', async (_e, { inputPath, segments, captionStyle, transcript }) => {
     if (!segments?.length) throw new Error('No segments to export')
 
     const result = await dialog.showSaveDialog(win, {
@@ -268,6 +354,14 @@ function registerHandlers(win) {
 
     const probeOut = await spawnPromise(ffprobePath, ['-v','quiet','-print_format','json','-show_streams', inputPath])
     const hasVideo = JSON.parse(probeOut).streams.some((s) => s.codec_type === 'video')
+
+    const tmpDir = path.join(os.tmpdir(), 'klippy')
+    fs.mkdirSync(tmpDir, { recursive: true })
+    const totalSec = segments.reduce((sum, s) => sum + (s.endMs - s.startMs), 0) / 1000
+    const useCaptions = captionStyle && hasVideo && transcript?.length
+
+    // If captions, export to temp first, then burn in
+    const exportTarget = useCaptions ? path.join(tmpDir, `edit_tmp_${Date.now()}.mp4`) : result.filePath
 
     let fc = ''
     if (hasVideo) {
@@ -287,25 +381,45 @@ function registerHandlers(win) {
     }
 
     const mapArgs = hasVideo ? ['-map','[vout]','-map','[aout]'] : ['-map','[aout]']
-    const totalSec = segments.reduce((sum, s) => sum + (s.endMs - s.startMs), 0) / 1000
 
     win.webContents.send('progress', { type: 'exporting', progress: 0 })
     await spawnPromise(ffmpegPath,
-      ['-y', '-i', inputPath, '-filter_complex', fc, ...mapArgs, '-c:v','libx264', '-c:a','aac', '-movflags','+faststart', result.filePath],
+      ['-y', '-i', inputPath, '-filter_complex', fc, ...mapArgs, '-c:v','libx264', '-c:a','aac', '-movflags','+faststart', exportTarget],
       (chunk) => {
         const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
         if (m && totalSec > 0) {
           const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
-          win.webContents.send('progress', { type: 'exporting', progress: Math.min(0.95, secs / totalSec) })
+          win.webContents.send('progress', { type: 'exporting', progress: Math.min(useCaptions ? 0.6 : 0.95, secs / totalSec) })
         }
       }
     )
+
+    if (useCaptions) {
+      const remapped = remapWordsToSegments(transcript, segments)
+      const assContent = buildAssFile(remapped, captionStyle)
+      const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
+      fs.writeFileSync(assPath, assContent, 'utf8')
+
+      win.webContents.send('progress', { type: 'exporting', progress: 0.65 })
+      await spawnPromise(ffmpegPath,
+        ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
+        (chunk) => {
+          const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+          if (m && totalSec > 0) {
+            const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
+            win.webContents.send('progress', { type: 'exporting', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
+          }
+        }
+      )
+      try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
+    }
+
     win.webContents.send('progress', { type: 'exporting', progress: 1 })
     return result.filePath
   })
 
   // exportClip
-  ipcMain.handle('exportClip', async (_e, { inputPath, startMs, endMs, title }) => {
+  ipcMain.handle('exportClip', async (_e, { inputPath, startMs, endMs, title, captionStyle, transcript }) => {
     const safeName = (title || 'clip').replace(/[^a-z0-9_\- ]/gi, '').replace(/\s+/g,'_').slice(0,50)
     const result = await dialog.showSaveDialog(win, {
       defaultPath: safeName + '.mp4',
@@ -314,17 +428,52 @@ function registerHandlers(win) {
     if (result.canceled) return null
 
     const totalSec = (endMs - startMs) / 1000
+    const tmpDir = path.join(os.tmpdir(), 'klippy')
+    fs.mkdirSync(tmpDir, { recursive: true })
+
+    // Check if video track exists
+    const probeOut = await spawnPromise(ffprobePath, ['-v','quiet','-print_format','json','-show_streams', inputPath])
+    const hasVideo = JSON.parse(probeOut).streams.some((s) => s.codec_type === 'video')
+    const useCaptions = captionStyle && hasVideo && transcript?.length
+
+    const exportTarget = useCaptions ? path.join(tmpDir, `clip_tmp_${Date.now()}.mp4`) : result.filePath
+
     win.webContents.send('progress', { type: 'exportingClip', progress: 0 })
     await spawnPromise(ffmpegPath,
-      ['-y', '-ss', (startMs/1000).toFixed(6), '-i', inputPath, '-t', totalSec.toFixed(6), '-c:v','libx264', '-c:a','aac', '-movflags','+faststart', result.filePath],
+      ['-y', '-ss', (startMs/1000).toFixed(6), '-i', inputPath, '-t', totalSec.toFixed(6), '-c:v','libx264', '-c:a','aac', '-movflags','+faststart', exportTarget],
       (chunk) => {
         const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
         if (m && totalSec > 0) {
           const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
-          win.webContents.send('progress', { type: 'exportingClip', progress: Math.min(0.95, secs / totalSec) })
+          win.webContents.send('progress', { type: 'exportingClip', progress: Math.min(useCaptions ? 0.6 : 0.95, secs / totalSec) })
         }
       }
     )
+
+    if (useCaptions) {
+      // Filter words within clip range and offset to start from 0
+      const clipWords = (transcript || [])
+        .filter((w) => w.startMs >= startMs - 100 && w.endMs <= endMs + 100)
+        .map((w) => ({ ...w, startMs: w.startMs - startMs, endMs: w.endMs - startMs }))
+
+      const assContent = buildAssFile(clipWords, captionStyle)
+      const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
+      fs.writeFileSync(assPath, assContent, 'utf8')
+
+      win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 })
+      await spawnPromise(ffmpegPath,
+        ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
+        (chunk) => {
+          const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+          if (m && totalSec > 0) {
+            const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
+            win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
+          }
+        }
+      )
+      try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
+    }
+
     win.webContents.send('progress', { type: 'exportingClip', progress: 1 })
     return result.filePath
   })

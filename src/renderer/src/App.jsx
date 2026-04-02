@@ -43,6 +43,11 @@ export default function App() {
   const [currentTimeMs, setCurrentTimeMs] = useState(0)
   const [seekTrigger, setSeekTrigger] = useState(null)
   const [settings, setSettings] = useState({ anthropicKey: '', whisperModel: 'base' })
+  const [captionStyle, setCaptionStyle] = useState({
+    enabled: false, mode: 'word', position: 'bottom',
+    font: 'Impact', size: 72, allCaps: true,
+    color: '#ffffff', outlineColor: '#000000', outlineSize: 2,
+  })
   const [status, setStatus] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [error, setError] = useState(null)
@@ -240,7 +245,12 @@ export default function App() {
     if (!sourceFile || !keptSegments.length) return
     setError(null)
     try {
-      await window.klippy.exportEdit({ inputPath: sourceFile.path, segments: keptSegments })
+      await window.klippy.exportEdit({
+        inputPath: sourceFile.path,
+        segments: keptSegments,
+        captionStyle: captionStyle.enabled ? captionStyle : null,
+        transcript,
+      })
     } catch (e) {
       setError(e.message)
     }
@@ -255,6 +265,8 @@ export default function App() {
         startMs: clip.startMs,
         endMs: clip.endMs,
         title: clip.title,
+        captionStyle: captionStyle.enabled ? captionStyle : null,
+        transcript,
       })
     } catch (e) {
       setError(e.message)
@@ -413,6 +425,8 @@ export default function App() {
               currentTimeMs={currentTimeMs}
               onTimeUpdate={setCurrentTimeMs}
               seekTrigger={seekTrigger}
+              transcript={transcript}
+              captionStyle={captionStyle}
             />
           </div>
 
@@ -452,6 +466,8 @@ export default function App() {
               onFindClips={handleFindClips}
               hasTranscript={hasTranscript}
               isWorking={isWorking}
+              captionStyle={captionStyle}
+              onCaptionStyleChange={setCaptionStyle}
             />
           </div>
         </div>
