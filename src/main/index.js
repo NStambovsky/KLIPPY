@@ -189,16 +189,21 @@ function registerHandlers(win) {
 
     win.webContents.send('progress', { type: 'transcribing', progress: 0.05 })
 
-    // Find python3
+    // Find python3 — prefer the one that has faster-whisper installed
     const pythonCandidates = [
-      '/opt/homebrew/bin/python3',
-      '/usr/local/bin/python3',
+      '/opt/homebrew/bin/python3',  // Apple Silicon Homebrew
+      '/usr/local/bin/python3',     // Intel Homebrew
       '/usr/bin/python3',
       'python3',
     ]
     let python = 'python3'
+    // Pick the first candidate where faster-whisper is importable
     for (const p of pythonCandidates) {
-      if (fs.existsSync(p)) { python = p; break }
+      if (!fs.existsSync(p) && p !== 'python3') continue
+      try {
+        const { status } = require('child_process').spawnSync(p, ['-c', 'import faster_whisper'])
+        if (status === 0) { python = p; break }
+      } catch {}
     }
 
     let stdout = ''
@@ -208,15 +213,20 @@ function registerHandlers(win) {
       proc.stdout.on('data', (d) => { stdout += d.toString() })
       proc.stderr.on('data', (d) => {
         stderr += d.toString()
-        // faster-whisper logs segment progress to stderr
-        const m = stderr.match(/(\d+)%/)
+        // faster-whisper logs progress to stderr — parse percentage
+        const m = d.toString().match(/(\d+)%/)
         if (m) win.webContents.send('progress', { type: 'transcribing', progress: Math.min(0.95, +m[1] / 100) })
       })
       proc.on('close', (code) => {
         if (code === 0) resolve()
-        else reject(new Error(stderr.slice(-600) || `Python exited with code ${code}`))
+        else reject(new Error(`Transcription failed (exit ${code}):\n\n${stderr || '(no output)'}`))
       })
-      proc.on('error', (e) => reject(new Error(`Could not start Python: ${e.message}\nInstall Python 3 via Homebrew: brew install python3`)))
+      proc.on('error', (e) => {
+        reject(new Error(
+          `Could not start Python (tried: ${python})\n${e.message}\n\n` +
+          `Make sure Python 3 is installed: brew install python3`
+        ))
+      })
     })
 
     let result
