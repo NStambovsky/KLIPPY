@@ -182,7 +182,9 @@ function registerHandlers(win) {
 
   // transcribe — local faster-whisper via Python (no API key needed)
   ipcMain.handle('transcribe', async (_e, audioPath, opts) => {
-    const { model = 'base' } = opts || {}
+    const VALID_MODELS = new Set(['tiny','tiny.en','base','base.en','small','small.en','medium','medium.en','large','large-v1','large-v2','large-v3','turbo'])
+    const rawModel = opts?.model || 'base'
+    const model = VALID_MODELS.has(rawModel) ? rawModel : 'base'
 
     // Locate transcribe.py — try both app root and relative to __dirname
     let scriptPath = path.join(app.getAppPath(), 'transcribe.py')
