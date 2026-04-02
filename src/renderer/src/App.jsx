@@ -300,9 +300,20 @@ export default function App() {
         )}
 
         {error && (
-          <div className="flex items-center gap-2 text-xs text-red-400 no-drag max-w-sm truncate">
-            <span>⚠</span> {error}
-            <button onClick={() => setError(null)} className="text-gray-500 hover:text-gray-300 ml-1">✕</button>
+          <div className="relative no-drag">
+            <button
+              className="flex items-center gap-2 text-xs text-red-400 bg-red-950/40 border border-red-900/50 rounded px-2 py-1 max-w-xs hover:max-w-2xl transition-all"
+              title={error}
+              onClick={() => {
+                navigator.clipboard?.writeText(error)
+                alert('Error copied to clipboard:\n\n' + error)
+              }}
+            >
+              <span>⚠</span>
+              <span className="truncate">{error.split('\n')[0]}</span>
+              <span className="text-red-600 flex-shrink-0">click for details</span>
+            </button>
+            <button onClick={() => setError(null)} className="absolute -top-1 -right-1 w-4 h-4 text-gray-600 hover:text-gray-300 text-xs bg-gray-900 rounded-full flex items-center justify-center">✕</button>
           </div>
         )}
 

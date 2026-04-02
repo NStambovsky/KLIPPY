@@ -184,8 +184,14 @@ function registerHandlers(win) {
   ipcMain.handle('transcribe', async (_e, audioPath, opts) => {
     const { model = 'base' } = opts || {}
 
-    // Locate transcribe.py relative to app root
-    const scriptPath = path.join(app.getAppPath(), 'transcribe.py')
+    // Locate transcribe.py — try both app root and relative to __dirname
+    let scriptPath = path.join(app.getAppPath(), 'transcribe.py')
+    if (!fs.existsSync(scriptPath)) {
+      scriptPath = path.join(__dirname, '../../transcribe.py')
+    }
+    if (!fs.existsSync(scriptPath)) {
+      throw new Error(`transcribe.py not found.\nLooked in:\n  ${path.join(app.getAppPath(), 'transcribe.py')}\n  ${path.join(__dirname, '../../transcribe.py')}`)
+    }
 
     win.webContents.send('progress', { type: 'transcribing', progress: 0.05 })
 
@@ -219,12 +225,13 @@ function registerHandlers(win) {
       })
       proc.on('close', (code) => {
         if (code === 0) resolve()
-        else reject(new Error(`Transcription failed (exit ${code}):\n\n${stderr || '(no output)'}`))
+        else reject(new Error(
+          `Transcription failed (exit ${code})\nPython: ${python}\nScript: ${scriptPath}\n\n${stderr || stdout || '(no output)'}`
+        ))
       })
       proc.on('error', (e) => {
         reject(new Error(
-          `Could not start Python (tried: ${python})\n${e.message}\n\n` +
-          `Make sure Python 3 is installed: brew install python3`
+          `Could not start Python.\nTried: ${python}\nError: ${e.message}\n\nRun KLIPPY.command to install dependencies, or: brew install python3 && pip3 install faster-whisper`
         ))
       })
     })
