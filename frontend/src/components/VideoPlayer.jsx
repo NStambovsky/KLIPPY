@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 
 function formatTime(s) {
   if (!isFinite(s) || s == null) return '0:00'
@@ -10,24 +10,21 @@ function formatTime(s) {
 /**
  * VideoPlayer
  * Props:
- *   mediaUrl          — src for the media element
- *   currentTime       — seek-to value from parent (transcript clicks)
- *   onTimeUpdate      — callback(t) on every timeupdate
- *   duration          — initial duration hint
- *   isAudio           — render audio UI
- *   clipRange         — {start, end, label} — highlight range + auto-stop
- *   onClipEnd         — called when clip finishes playing
- *   keptSegments      — [{start, end}] kept segments for edit-mode skip
- *   transcript        — for live caption overlay
- *   subtitleConfig    — caption display settings
- *
- * Ref methods (via forwardRef):
- *   seekAndPlay(start) — seek to time and play (call within user gesture)
+ *   mediaUrl       — src for the media element
+ *   currentTime    — seek-to value (from transcript word clicks)
+ *   onTimeUpdate   — callback(t) on every timeupdate
+ *   duration       — initial duration hint
+ *   isAudio        — render audio UI
+ *   seekTrigger    — {time, ts} changing this object seeks+plays (ts=Date.now())
+ *   clipRange      — {start, end, label} for seekbar highlight only
+ *   keptSegments   — [{start, end}] for edit-mode skip during playback
+ *   transcript     — for live caption overlay
+ *   subtitleConfig — caption display settings
  */
-const VideoPlayer = forwardRef(function VideoPlayer({
+export default function VideoPlayer({
   mediaUrl, currentTime, onTimeUpdate, duration, isAudio,
-  clipRange, onClipEnd, keptSegments, transcript, subtitleConfig,
-}, ref) {
+  seekTrigger, clipRange, keptSegments, transcript, subtitleConfig,
+}) {
   const mediaRef = useRef(null)
   const seekTrackRef = useRef(null)
   const [playing, setPlaying] = useState(false)
@@ -35,41 +32,26 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   const [localTime, setLocalTime] = useState(0)
   const [localDuration, setLocalDuration] = useState(duration || 0)
   const [dragging, setDragging] = useState(false)
-  const clipRangeRef = useRef(clipRange)
-  clipRangeRef.current = clipRange
   const keptSegmentsRef = useRef(keptSegments)
   keptSegmentsRef.current = keptSegments
 
-  // ── Expose seekAndPlay imperatively ────────────────────────────────────────
-  // newClipRange is passed so clipRangeRef is updated IMMEDIATELY — before
-  // React re-renders — preventing the auto-stop logic from firing with the
-  // stale previous clip range during the transition.
-  useImperativeHandle(ref, () => ({
-    seekAndPlay(start, newClipRange) {
-      // Update ref NOW so timeupdate sees correct range before React re-renders
-      if (newClipRange !== undefined) clipRangeRef.current = newClipRange
-      const el = mediaRef.current
-      if (!el) return
-      el.currentTime = start
-      el.play().catch(() => {})
-    },
-  }), [])
+  // ── seekTrigger: jump to time and play ─────────────────────────────────────
+  useEffect(() => {
+    if (!seekTrigger) return
+    const el = mediaRef.current
+    if (!el) return
+    el.currentTime = seekTrigger.time
+    el.play().catch(() => {})
+  }, [seekTrigger])
 
-  // ── Transcript word click → seek (skipped when preview is active) ─────────
+  // ── Transcript word click → seek ───────────────────────────────────────────
   useEffect(() => {
     const el = mediaRef.current
-    if (!el || dragging || clipRangeRef.current) return
+    if (!el || dragging) return
     if (Math.abs(el.currentTime - currentTime) > 0.3) {
       el.currentTime = currentTime
     }
   }, [currentTime])
-
-  // ── clipRange null → pause (stop preview) ────────────────────────────────
-  useEffect(() => {
-    if (!clipRange) {
-      mediaRef.current?.pause()
-    }
-  }, [clipRange])
 
   // ── Event listeners ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -81,35 +63,23 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       setLocalTime(t)
       onTimeUpdate(t)
 
-      // Auto-stop at clip-preview end
-      const cr = clipRangeRef.current
-      if (cr && t >= cr.end) {
-        el.pause()
-        el.currentTime = cr.end
-        onClipEnd?.()
-        return
-      }
-
       // Skip over deleted sections in edit-preview mode
-      if (!cr) {
-        const segs = keptSegmentsRef.current
-        if (segs && segs.length > 0) {
-          // Check if t falls in a gap (not inside any kept segment)
-          let inKept = false
-          let nextStart = null
-          for (let i = 0; i < segs.length; i++) {
-            if (t >= segs[i].start && t <= segs[i].end + 0.05) {
-              inKept = true
-              break
-            }
-            if (t < segs[i].start) {
-              nextStart = segs[i].start
-              break
-            }
+      const segs = keptSegmentsRef.current
+      if (segs && segs.length > 0) {
+        let inKept = false
+        let nextStart = null
+        for (let i = 0; i < segs.length; i++) {
+          if (t >= segs[i].start && t <= segs[i].end + 0.05) {
+            inKept = true
+            break
           }
-          if (!inKept && nextStart !== null) {
-            el.currentTime = nextStart
+          if (t < segs[i].start) {
+            nextStart = segs[i].start
+            break
           }
+        }
+        if (!inKept && nextStart !== null) {
+          el.currentTime = nextStart
         }
       }
     }
@@ -127,19 +97,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       el.removeEventListener('pause', onPause)
       el.removeEventListener('loadedmetadata', onLoaded)
     }
-  }, [onTimeUpdate, onClipEnd])
+  }, [onTimeUpdate])
 
   function togglePlay() {
     const el = mediaRef.current
     if (!el) return
-    if (playing) {
-      el.pause()
-    } else {
-      if (clipRangeRef.current && el.currentTime >= clipRangeRef.current.end) {
-        el.currentTime = clipRangeRef.current.start
-      }
-      el.play().catch(() => {})
-    }
+    if (playing) el.pause()
+    else el.play().catch(() => {})
   }
 
   // ── Custom seekbar ─────────────────────────────────────────────────────────
@@ -149,9 +113,8 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     if (!el || !track || !localDuration) return
     const rect = track.getBoundingClientRect()
     const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-    const t = pct * localDuration
-    el.currentTime = t
-    setLocalTime(t)
+    el.currentTime = pct * localDuration
+    setLocalTime(pct * localDuration)
   }
 
   function onTrackMouseDown(e) {
@@ -243,11 +206,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         </div>
       )}
 
-      {/* Clip preview banner */}
+      {/* Clip location banner */}
       {clipRange && (
         <div className="clip-preview-banner">
           <span className="clip-preview-dot" />
-          Previewing: {clipRange.label || `${formatTime(clipRange.start)} – ${formatTime(clipRange.end)}`}
+          {clipRange.label || `${formatTime(clipRange.start)} – ${formatTime(clipRange.end)}`}
           <span style={{marginLeft:'auto', fontSize:10, opacity:0.7}}>
             {formatTime(clipRange.end - clipRange.start)}
           </span>
@@ -256,14 +219,9 @@ const VideoPlayer = forwardRef(function VideoPlayer({
 
       {/* Controls */}
       <div className="player-controls">
-        {/* Custom seekbar */}
         <div className="seek-row">
           <span className="time-label">{formatTime(localTime)}</span>
-          <div
-            className="seek-track"
-            ref={seekTrackRef}
-            onMouseDown={onTrackMouseDown}
-          >
+          <div className="seek-track" ref={seekTrackRef} onMouseDown={onTrackMouseDown}>
             <div className="seek-bg" />
             {clipRange && (
               <div className="seek-clip-range" style={{ left: `${clipLeft}%`, width: `${clipWidth}%` }} />
@@ -321,7 +279,6 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           color: #fff; font-weight: 900; text-align: center;
           pointer-events: none; white-space: pre-wrap; max-width: 85%;
           line-height: 1.1; letter-spacing: 0.02em;
-          text-shadow: none;
         }
         .caption-pos-bottom { bottom: 8%; }
         .caption-pos-top    { top: 6%; }
@@ -341,36 +298,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
         .player-controls { background: var(--surface); border-top: 1px solid var(--border); padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
-
-        /* Custom seekbar */
         .seek-row { display: flex; align-items: center; gap: 8px; }
-        .seek-track {
-          flex: 1; height: 20px; position: relative;
-          display: flex; align-items: center; cursor: pointer;
-        }
-        .seek-bg {
-          position: absolute; inset: 50% 0; transform: translateY(-50%);
-          height: 4px; background: var(--surface3); border-radius: 99px;
-        }
-        .seek-clip-range {
-          position: absolute; top: 50%; transform: translateY(-50%);
-          height: 4px; background: var(--accent); opacity: 0.35;
-          border-radius: 99px; pointer-events: none;
-        }
-        .seek-played {
-          position: absolute; top: 50%; transform: translateY(-50%);
-          height: 4px; background: var(--text-muted);
-          border-radius: 99px; pointer-events: none; max-width: 100%;
-        }
-        .seek-thumb {
-          position: absolute; top: 50%; transform: translate(-50%, -50%);
-          width: 12px; height: 12px; border-radius: 50%;
-          background: #fff; pointer-events: none;
-          box-shadow: 0 1px 4px rgba(0,0,0,0.5);
-          transition: transform 0.1s;
-        }
+        .seek-track { flex: 1; height: 20px; position: relative; display: flex; align-items: center; cursor: pointer; }
+        .seek-bg { position: absolute; inset: 50% 0; transform: translateY(-50%); height: 4px; background: var(--surface3); border-radius: 99px; }
+        .seek-clip-range { position: absolute; top: 50%; transform: translateY(-50%); height: 4px; background: var(--accent); opacity: 0.35; border-radius: 99px; pointer-events: none; }
+        .seek-played { position: absolute; top: 50%; transform: translateY(-50%); height: 4px; background: var(--text-muted); border-radius: 99px; pointer-events: none; max-width: 100%; }
+        .seek-thumb { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 12px; height: 12px; border-radius: 50%; background: #fff; pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,0.5); }
         .seek-track:hover .seek-thumb { transform: translate(-50%, -50%) scale(1.3); }
-
         .time-label { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 36px; }
         .ctrl-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
         .ctrl-btn { display: flex; align-items: center; gap: 3px; padding: 6px 10px; }
@@ -379,6 +313,4 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       `}</style>
     </div>
   )
-})
-
-export default VideoPlayer
+}

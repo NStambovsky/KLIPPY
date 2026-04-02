@@ -1,5 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react'
-import UploadZone from './components/UploadZone.jsx'
+import React, { useState, useCallback, useRef, useEffect } from 'react'import UploadZone from './components/UploadZone.jsx'
 import VideoPlayer from './components/VideoPlayer.jsx'
 import TranscriptEditor from './components/TranscriptEditor.jsx'
 import ClipsPanel from './components/ClipsPanel.jsx'
@@ -26,10 +25,10 @@ export default function App() {
     max_chars: 28, font_name: 'Impact',
   })
   const [keptSegments, setKeptSegments] = useState([])
+  const [seekTrigger, setSeekTrigger] = useState(null)
   const [toasts, setToasts] = useState([])
   const [modelSize, setModelSize] = useState('base')
   const pollRef = useRef(null)
-  const videoRef = useRef(null)  // ref to VideoPlayer (exposes seekAndPlay)
 
   const isAudio = uploadedFile
     ? AUDIO_EXTS.has('.' + (uploadedFile.filename?.split('.').pop() || '').toLowerCase())
@@ -114,11 +113,8 @@ export default function App() {
   const handleSeek = useCallback(t => { setSeekTo(t); setPreviewRange(null) }, [])
   const handlePreviewClip = useCallback((start, end, label) => {
     if (start == null) { setPreviewRange(null); return }
-    const range = { start, end, label }
-    setPreviewRange(range)
-    // Pass range so VideoPlayer can update clipRangeRef immediately,
-    // before React re-renders — prevents stale auto-stop race condition.
-    videoRef.current?.seekAndPlay(start, range)
+    setPreviewRange({ start, end, label })
+    setSeekTrigger({ time: start, ts: Date.now() })
   }, [])
   const handleSegmentsChange = useCallback(segs => setKeptSegments(segs), [])
 
@@ -261,14 +257,13 @@ export default function App() {
               {isAudio ? 'Audio' : 'Video'}
             </div>
             <VideoPlayer
-              ref={videoRef}
               mediaUrl={uploadedFile.media_url}
               currentTime={seekTo}
               onTimeUpdate={handleTimeUpdate}
               duration={uploadedFile.duration}
               isAudio={isAudio}
+              seekTrigger={seekTrigger}
               clipRange={previewRange}
-              onClipEnd={() => setPreviewRange(null)}
               keptSegments={keptSegments}
               transcript={transcript}
               subtitleConfig={subtitleConfig}
