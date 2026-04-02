@@ -1,32 +1,5 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-.venv/
-venv/
-*.egg-info/
-.pytest_cache/
-
-# Node
 node_modules/
+out/
 dist/
-.npm
-
-# Storage (user uploads & clips)
-backend/storage/
-
-# Whisper model cache
-~/.cache/huggingface/
-
-# OS
 .DS_Store
-Thumbs.db
-
-# Editor
-.vscode/
-.idea/
-*.swp
-
-# Env
-.env
-.env.local
+*.local
