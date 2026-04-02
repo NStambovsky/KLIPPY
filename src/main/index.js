@@ -79,7 +79,8 @@ function createWindow() {
 
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
-    win.webContents.openDevTools({ mode: 'detach' })
+    // Only open DevTools if explicitly requested
+    if (process.env.KLIPPY_DEVTOOLS) win.webContents.openDevTools({ mode: 'detach' })
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
