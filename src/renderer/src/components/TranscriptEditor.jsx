@@ -61,6 +61,7 @@ export default function TranscriptEditor({
   }, [contextMenu])
 
   function onWordMouseDown(e, idx) {
+    if (e.button !== 0) return  // ignore right-click / middle-click
     e.preventDefault()
     setIsDragging(true)
     setDragStart(idx)
