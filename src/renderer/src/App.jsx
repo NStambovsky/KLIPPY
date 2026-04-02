@@ -42,7 +42,7 @@ export default function App() {
   const [aiSuggestions, setAiSuggestions] = useState([])
   const [currentTimeMs, setCurrentTimeMs] = useState(0)
   const [seekTrigger, setSeekTrigger] = useState(null)
-  const [settings, setSettings] = useState({ openaiKey: '', anthropicKey: '', whisperModel: 'whisper-1' })
+  const [settings, setSettings] = useState({ anthropicKey: '', whisperModel: 'base' })
   const [status, setStatus] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [error, setError] = useState(null)
@@ -97,15 +97,10 @@ export default function App() {
 
   async function handleTranscribe() {
     if (!sourceFile) return
-    if (!settings.openaiKey) {
-      setShowSettings(true)
-      return
-    }
     setError(null)
     try {
       const words = await window.klippy.transcribe(sourceFile.audioPath, {
-        model: settings.whisperModel || 'whisper-1',
-        apiKey: settings.openaiKey,
+        model: settings.whisperModel || 'base',
       })
       setTranscript(
         words.map((w) => ({

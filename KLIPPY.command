@@ -27,6 +27,16 @@ if ! command -v node &>/dev/null; then
   brew install node
 fi
 
+# ── Python + faster-whisper ────────────────────────────────────────────────────
+if ! command -v python3 &>/dev/null; then
+  echo "Installing Python 3..."
+  brew install python3
+fi
+if ! python3 -c "import faster_whisper" &>/dev/null 2>&1; then
+  echo "Installing faster-whisper..."
+  pip3 install faster-whisper --quiet
+fi
+
 # ── Repo ───────────────────────────────────────────────────────────────────────
 REPO_DIR="$HOME/KLIPPY"
 

@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 
 export default function SettingsModal({ settings, onSave, onClose }) {
   const [form, setForm] = useState({ ...settings })
-
   function set(key, val) { setForm((f) => ({ ...f, [key]: val })) }
 
   return (
@@ -13,20 +12,36 @@ export default function SettingsModal({ settings, onSave, onClose }) {
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg">✕</button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
+          {/* Whisper model — no API key needed */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">OpenAI API Key <span className="text-gray-600">(for Whisper transcription)</span></label>
-            <input
-              type="password"
-              value={form.openaiKey || ''}
-              onChange={(e) => set('openaiKey', e.target.value)}
-              placeholder="sk-..."
+            <label className="block text-xs font-medium text-gray-300 mb-1">
+              Whisper Model
+              <span className="text-gray-500 font-normal ml-1">(runs locally, no API key)</span>
+            </label>
+            <select
+              value={form.whisperModel || 'base'}
+              onChange={(e) => set('whisperModel', e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 outline-none focus:border-violet-500 transition-colors"
-            />
+            >
+              <option value="tiny">tiny — fastest, less accurate</option>
+              <option value="base">base — recommended (default)</option>
+              <option value="small">small — more accurate, slower</option>
+              <option value="medium">medium — most accurate, slow</option>
+            </select>
+            <p className="text-xs text-gray-600 mt-1">
+              First use downloads the model (~75MB for base). Cached after that.
+            </p>
           </div>
 
+          <hr className="border-gray-800" />
+
+          {/* Anthropic key — optional, only for AI clips */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Anthropic API Key <span className="text-gray-600">(for AI clip suggestions)</span></label>
+            <label className="block text-xs font-medium text-gray-300 mb-1">
+              Anthropic API Key
+              <span className="text-gray-500 font-normal ml-1">(optional — for ✨ AI Clip Suggestions only)</span>
+            </label>
             <input
               type="password"
               value={form.anthropicKey || ''}
@@ -34,37 +49,19 @@ export default function SettingsModal({ settings, onSave, onClose }) {
               placeholder="sk-ant-..."
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 outline-none focus:border-violet-500 transition-colors"
             />
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Whisper Model</label>
-            <select
-              value={form.whisperModel || 'whisper-1'}
-              onChange={(e) => set('whisperModel', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 outline-none focus:border-violet-500 transition-colors"
-            >
-              <option value="whisper-1">whisper-1 (standard)</option>
-            </select>
+            <p className="text-xs text-gray-600 mt-1">
+              Get one at console.anthropic.com. Not required to use the app.
+            </p>
           </div>
 
           <p className="text-xs text-gray-600">
-            API keys are stored locally on your machine and never sent anywhere except to OpenAI/Anthropic.
+            All settings stored locally on your machine.
           </p>
         </div>
 
         <div className="flex justify-end gap-2 mt-6">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => onSave(form)}
-            className="px-4 py-2 text-sm bg-violet-600 hover:bg-violet-500 rounded-lg font-medium transition-colors"
-          >
-            Save
-          </button>
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition-colors">Cancel</button>
+          <button onClick={() => onSave(form)} className="px-4 py-2 text-sm bg-violet-600 hover:bg-violet-500 rounded-lg font-medium transition-colors">Save</button>
         </div>
       </div>
     </div>

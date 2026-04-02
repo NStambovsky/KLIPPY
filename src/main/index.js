@@ -5,7 +5,6 @@ const os = require('os')
 const { spawn } = require('child_process')
 const { pathToFileURL } = require('url')
 
-const OpenAI = require('openai').default || require('openai')
 const Anthropic = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk')
 
 // ─── FFmpeg path resolution ────────────────────────────────────────────────────
@@ -181,29 +180,59 @@ function registerHandlers(win) {
     return { durationMs, audioPath, mediaUrl: 'media://' + encodeURIComponent(filePath) }
   })
 
-  // transcribe — OpenAI Whisper API
+  // transcribe — local faster-whisper via Python (no API key needed)
   ipcMain.handle('transcribe', async (_e, audioPath, opts) => {
-    const { model = 'whisper-1', apiKey } = opts || {}
-    if (!apiKey) throw new Error('OpenAI API key required — open Settings (⌘,)')
+    const { model = 'base' } = opts || {}
 
-    const openai = new OpenAI({ apiKey })
-    win.webContents.send('progress', { type: 'transcribing', progress: 0.1 })
+    // Locate transcribe.py relative to app root
+    const scriptPath = path.join(app.getAppPath(), 'transcribe.py')
 
-    const response = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model,
-      response_format: 'verbose_json',
-      timestamp_granularities: ['word'],
+    win.webContents.send('progress', { type: 'transcribing', progress: 0.05 })
+
+    // Find python3
+    const pythonCandidates = [
+      '/opt/homebrew/bin/python3',
+      '/usr/local/bin/python3',
+      '/usr/bin/python3',
+      'python3',
+    ]
+    let python = 'python3'
+    for (const p of pythonCandidates) {
+      if (fs.existsSync(p)) { python = p; break }
+    }
+
+    let stdout = ''
+    let stderr = ''
+    await new Promise((resolve, reject) => {
+      const proc = spawn(python, [scriptPath, audioPath, model])
+      proc.stdout.on('data', (d) => { stdout += d.toString() })
+      proc.stderr.on('data', (d) => {
+        stderr += d.toString()
+        // faster-whisper logs segment progress to stderr
+        const m = stderr.match(/(\d+)%/)
+        if (m) win.webContents.send('progress', { type: 'transcribing', progress: Math.min(0.95, +m[1] / 100) })
+      })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(stderr.slice(-600) || `Python exited with code ${code}`))
+      })
+      proc.on('error', (e) => reject(new Error(`Could not start Python: ${e.message}\nInstall Python 3 via Homebrew: brew install python3`)))
     })
+
+    let result
+    try { result = JSON.parse(stdout) } catch {
+      throw new Error(`Transcription output parse error:\n${stdout.slice(0, 300)}`)
+    }
+    if (result.error) throw new Error(result.error)
 
     win.webContents.send('progress', { type: 'transcribing', progress: 1 })
 
-    return (response.words || []).map((w, i) => ({
+    return (result.words || []).map((w, i) => ({
       id: i,
       word: w.word,
-      startMs: Math.round((w.start || 0) * 1000),
-      endMs: Math.round((w.end || 0) * 1000),
-      confidence: w.probability ?? 1,
+      startMs: w.startMs,
+      endMs: w.endMs,
+      confidence: w.confidence ?? 1,
     }))
   })
 
