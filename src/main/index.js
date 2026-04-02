@@ -40,6 +40,26 @@ function saveSettings(data) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2))
 }
 
+// ─── Check libass / subtitles filter availability (cached) ────────────────────
+let _subtitlesFilterAvailable = null
+async function hasSubtitlesFilter() {
+  if (_subtitlesFilterAvailable !== null) return _subtitlesFilterAvailable
+  try {
+    const combined = await new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, ['-filters'])
+      let out = ''
+      proc.stdout.on('data', (d) => { out += d })
+      proc.stderr.on('data', (d) => { out += d })
+      proc.on('close', () => resolve(out))
+      proc.on('error', () => resolve(''))
+    })
+    _subtitlesFilterAvailable = /\bsubtitles\b/.test(combined)
+  } catch {
+    _subtitlesFilterAvailable = false
+  }
+  return _subtitlesFilterAvailable
+}
+
 // ─── ASS subtitle helpers ──────────────────────────────────────────────────────
 function hexToAss(hex) {
   // '#RRGGBB' → '&H00BBGGRR'
@@ -395,23 +415,36 @@ function registerHandlers(win) {
     )
 
     if (useCaptions) {
-      const remapped = remapWordsToSegments(transcript, segments)
-      const assContent = buildAssFile(remapped, captionStyle)
-      const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
-      fs.writeFileSync(assPath, assContent, 'utf8')
+      const canBurnCaptions = await hasSubtitlesFilter()
+      if (canBurnCaptions) {
+        const remapped = remapWordsToSegments(transcript, segments)
+        const assContent = buildAssFile(remapped, captionStyle)
+        const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
+        fs.writeFileSync(assPath, assContent, 'utf8')
 
-      win.webContents.send('progress', { type: 'exporting', progress: 0.65 })
-      await spawnPromise(ffmpegPath,
-        ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
-        (chunk) => {
-          const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
-          if (m && totalSec > 0) {
-            const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
-            win.webContents.send('progress', { type: 'exporting', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
-          }
+        win.webContents.send('progress', { type: 'exporting', progress: 0.65 })
+        try {
+          await spawnPromise(ffmpegPath,
+            ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
+            (chunk) => {
+              const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+              if (m && totalSec > 0) {
+                const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
+                win.webContents.send('progress', { type: 'exporting', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
+              }
+            }
+          )
+        } catch (captionErr) {
+          // Burn-in failed — save without captions and warn
+          fs.copyFileSync(exportTarget, result.filePath)
+          win.webContents.send('captionWarning', `Caption burn-in failed: ${captionErr.message.split('\n')[0]}. Run: brew reinstall ffmpeg`)
         }
-      )
-      try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
+        try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
+      } else {
+        // No libass — still save the video, just without burned captions
+        fs.renameSync(exportTarget, result.filePath)
+        win.webContents.send('captionWarning', 'Caption burn-in requires ffmpeg with libass. Exported without captions. Fix: brew reinstall ffmpeg')
+      }
     }
 
     win.webContents.send('progress', { type: 'exporting', progress: 1 })
@@ -451,27 +484,37 @@ function registerHandlers(win) {
     )
 
     if (useCaptions) {
-      // Filter words within clip range and offset to start from 0
-      const clipWords = (transcript || [])
-        .filter((w) => w.startMs >= startMs - 100 && w.endMs <= endMs + 100)
-        .map((w) => ({ ...w, startMs: w.startMs - startMs, endMs: w.endMs - startMs }))
+      const canBurnCaptions = await hasSubtitlesFilter()
+      if (canBurnCaptions) {
+        const clipWords = (transcript || [])
+          .filter((w) => w.startMs >= startMs - 100 && w.endMs <= endMs + 100)
+          .map((w) => ({ ...w, startMs: w.startMs - startMs, endMs: w.endMs - startMs }))
 
-      const assContent = buildAssFile(clipWords, captionStyle)
-      const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
-      fs.writeFileSync(assPath, assContent, 'utf8')
+        const assContent = buildAssFile(clipWords, captionStyle)
+        const assPath = path.join(tmpDir, `caps_${Date.now()}.ass`)
+        fs.writeFileSync(assPath, assContent, 'utf8')
 
-      win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 })
-      await spawnPromise(ffmpegPath,
-        ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
-        (chunk) => {
-          const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
-          if (m && totalSec > 0) {
-            const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
-            win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
-          }
+        win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 })
+        try {
+          await spawnPromise(ffmpegPath,
+            ['-y', '-i', exportTarget, '-vf', `subtitles=${assPath.replace(/\\/g, '/')}`, '-c:a', 'copy', '-movflags', '+faststart', result.filePath],
+            (chunk) => {
+              const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+              if (m && totalSec > 0) {
+                const secs = +m[1]*3600 + +m[2]*60 + parseFloat(m[3])
+                win.webContents.send('progress', { type: 'exportingClip', progress: 0.65 + Math.min(0.3, (secs / totalSec) * 0.3) })
+              }
+            }
+          )
+        } catch (captionErr) {
+          fs.copyFileSync(exportTarget, result.filePath)
+          win.webContents.send('captionWarning', `Caption burn-in failed: ${captionErr.message.split('\n')[0]}. Run: brew reinstall ffmpeg`)
         }
-      )
-      try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
+        try { fs.unlinkSync(exportTarget); fs.unlinkSync(assPath) } catch {}
+      } else {
+        fs.renameSync(exportTarget, result.filePath)
+        win.webContents.send('captionWarning', 'Caption burn-in requires ffmpeg with libass. Exported without captions. Fix: brew reinstall ffmpeg')
+      }
     }
 
     win.webContents.send('progress', { type: 'exportingClip', progress: 1 })

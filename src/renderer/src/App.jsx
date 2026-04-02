@@ -51,6 +51,7 @@ export default function App() {
   const [status, setStatus] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [error, setError] = useState(null)
+  const [captionWarning, setCaptionWarning] = useState(null)
 
   const keptSegments = useMemo(
     () => computeKeptSegments(transcript, deletedIds),
@@ -70,6 +71,10 @@ export default function App() {
       setStatus({ type, progress })
       if (progress >= 1) setTimeout(() => setStatus((s) => (s?.type === type ? null : s)), 1200)
     })
+  }, [])
+
+  useEffect(() => {
+    return window.klippy.on('captionWarning', (msg) => setCaptionWarning(msg))
   }, [])
 
   // Listen to menu triggers from main process
@@ -326,6 +331,14 @@ export default function App() {
               <span className="text-red-600 flex-shrink-0">click for details</span>
             </button>
             <button onClick={() => setError(null)} className="absolute -top-1 -right-1 w-4 h-4 text-gray-600 hover:text-gray-300 text-xs bg-gray-900 rounded-full flex items-center justify-center">✕</button>
+          </div>
+        )}
+
+        {captionWarning && (
+          <div className="relative no-drag flex items-center gap-2 text-xs text-yellow-400 bg-yellow-950/40 border border-yellow-900/50 rounded px-2 py-1 max-w-sm">
+            <span>⚠</span>
+            <span className="truncate">{captionWarning}</span>
+            <button onClick={() => setCaptionWarning(null)} className="ml-1 text-yellow-700 hover:text-yellow-400 flex-shrink-0">✕</button>
           </div>
         )}
 
