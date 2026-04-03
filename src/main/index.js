@@ -266,28 +266,36 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
     if (!vfFilter) break
 
     sendProg(0)
-    try {
-      await spawnPromise(ffmpegPath,
-        ['-y', '-i', srcPath, '-vf', vfFilter, '-c:a', 'copy', '-movflags', '+faststart', dstPath],
-        (chunk) => {
-          const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
-          if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
-        }
-      )
+    // Use a custom spawn that captures full stderr (not just last 500 chars)
+    // and suppresses ffmpeg's version banner with -loglevel error
+    const result = await new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, ['-y', '-loglevel', 'error', '-i', srcPath, '-vf', vfFilter, '-c:a', 'copy', '-movflags', '+faststart', dstPath])
+      let stderr = ''
+      proc.stderr.on('data', (d) => {
+        const chunk = d.toString()
+        stderr += chunk
+        const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+        if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
+      })
+      proc.on('close', (code) => resolve({ code, stderr }))
+      proc.on('error', (e) => resolve({ code: -1, stderr: e.message }))
+    })
+
+    if (result.code === 0) {
       console.log('[KLIPPY] drawtext success with:', fontPart)
-      return null  // success
-    } catch (e) {
-      console.log('[KLIPPY] drawtext failed with', fontPart, ':', e.message.slice(0, 300))
-      errors.push(`${fontPart}: ${e.message.split('\n')[0]}`)
-      // try next font strategy
+      return null
     }
+    const errMsg = result.stderr.trim().slice(0, 400)
+    console.log('[KLIPPY] drawtext failed with', fontPart, ':', errMsg)
+    errors.push(`${fontPart}: ${errMsg}`)
   }
 
   // All methods failed — export without captions
   fs.copyFileSync(srcPath, dstPath)
   console.log('[KLIPPY] all caption strategies failed:', errors)
-  const firstErr = errors[0] || 'unknown error'
-  return `Caption burn-in failed (drawtext): ${firstErr.slice(0, 120)}. Fix: brew reinstall ffmpeg`
+  // Show first actual error (now clean — banner suppressed by -loglevel error)
+  const firstErr = (errors[0] || 'unknown error').replace(/^font='[^']*': /, '').replace(/^fontfile='[^']*': /, '')
+  return `Caption burn-in failed: ${firstErr.slice(0, 200)}`
 }
 
 // Remap transcript words to a new timeline defined by kept segments
