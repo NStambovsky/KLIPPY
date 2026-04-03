@@ -40,25 +40,42 @@ function saveSettings(data) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2))
 }
 
-// ─── Check filter availability (cached) ───────────────────────────────────────
-let _ffmpegFilters = null
-async function getFFmpegFilters() {
-  if (_ffmpegFilters !== null) return _ffmpegFilters
-  _ffmpegFilters = await new Promise((resolve) => {
+// ─── Check filter availability — test by actually running a 1-frame command ───
+// Parsing '-filters' output is unreliable; this is the ground truth.
+let _drawtextOk = null
+let _subtitlesOk = null
+
+async function probeFilter(vfArg) {
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, [
+      '-y', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'color=black:s=16x16:d=0.04',
+      '-vf', vfArg,
+      '-frames:v', '1', '-f', 'null', '-',
+    ])
+    proc.on('close', (code) => resolve(code === 0))
+    proc.on('error', () => resolve(false))
+  })
+}
+
+async function hasDrawtextFilter() {
+  if (_drawtextOk !== null) return _drawtextOk
+  _drawtextOk = await probeFilter("drawtext=text='x':fontsize=10:fontcolor=white")
+  return _drawtextOk
+}
+
+async function hasSubtitlesFilter() {
+  if (_subtitlesOk !== null) return _subtitlesOk
+  // subtitles filter needs a real file — just check presence via -filters text
+  _subtitlesOk = await new Promise((resolve) => {
     const proc = spawn(ffmpegPath, ['-filters'])
     let out = ''
     proc.stdout.on('data', (d) => { out += d })
     proc.stderr.on('data', (d) => { out += d })
-    proc.on('close', () => resolve(out))
-    proc.on('error', () => resolve(''))
+    proc.on('close', () => resolve(/\bsubtitles\b/.test(out)))
+    proc.on('error', () => resolve(false))
   })
-  return _ffmpegFilters
-}
-async function hasSubtitlesFilter() {
-  return /\bsubtitles\b/.test(await getFFmpegFilters())
-}
-async function hasDrawtextFilter() {
-  return /\bdrawtext\b/.test(await getFFmpegFilters())
+  return _subtitlesOk
 }
 
 // ─── ASS subtitle helpers ──────────────────────────────────────────────────────
@@ -713,10 +730,8 @@ app.whenReady().then(() => {
 
   // After renderer loads, check ffmpeg capabilities and warn if missing
   win.webContents.once('did-finish-load', async () => {
-    const filters = await getFFmpegFilters()
-    const hasDrawtext = /\bdrawtext\b/.test(filters)
-    const hasSubtitles = /\bsubtitles\b/.test(filters)
-    if (!hasDrawtext && !hasSubtitles) {
+    const [dt, sub] = await Promise.all([hasDrawtextFilter(), hasSubtitlesFilter()])
+    if (!dt && !sub) {
       win.webContents.send('captionWarning',
         `Caption export unavailable — ffmpeg at ${ffmpegPath} is missing libfreetype and libass. ` +
         `Open Terminal and run: brew reinstall ffmpeg`
