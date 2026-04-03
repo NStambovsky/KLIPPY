@@ -251,8 +251,10 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
     `font='Sans'`,
   ]
   const systemFile = findSystemFontFile()
+  console.log('[KLIPPY] drawtext system font found:', systemFile)
   if (systemFile) fontStrategies.push(`fontfile='${escapeDrawtext(systemFile)}'`)
 
+  const errors = []
   for (const fontPart of fontStrategies) {
     const vfFilter = buildDrawtextFilterWithFont(words, captionStyle, fontPart, isSentence)
     if (!vfFilter) break
@@ -266,15 +268,19 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
           if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
         }
       )
+      console.log('[KLIPPY] drawtext success with:', fontPart)
       return null  // success
-    } catch {
+    } catch (e) {
+      console.log('[KLIPPY] drawtext failed with', fontPart, ':', e.message.slice(0, 300))
+      errors.push(`${fontPart}: ${e.message.split('\n')[0]}`)
       // try next font strategy
     }
   }
 
   // All methods failed — export without captions
   fs.copyFileSync(srcPath, dstPath)
-  return 'Caption burn-in failed: no usable font found. For best results: brew reinstall ffmpeg'
+  console.log('[KLIPPY] all caption strategies failed:', errors)
+  return `Caption burn-in failed. Tried ${fontStrategies.length} font strategies. Details in console. Fix: brew reinstall ffmpeg`
 }
 
 // Remap transcript words to a new timeline defined by kept segments
