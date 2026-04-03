@@ -335,10 +335,17 @@ export default function App() {
         )}
 
         {captionWarning && (
-          <div className="relative no-drag flex items-center gap-2 text-xs text-yellow-400 bg-yellow-950/40 border border-yellow-900/50 rounded px-2 py-1 max-w-sm">
-            <span>⚠</span>
-            <span className="truncate">{captionWarning}</span>
-            <button onClick={() => setCaptionWarning(null)} className="ml-1 text-yellow-700 hover:text-yellow-400 flex-shrink-0">✕</button>
+          <div className="relative no-drag">
+            <button
+              className="flex items-center gap-2 text-xs text-yellow-400 bg-yellow-950/40 border border-yellow-900/50 rounded px-2 py-1 max-w-xs hover:max-w-2xl transition-all text-left"
+              onClick={() => { navigator.clipboard?.writeText(captionWarning); alert(captionWarning) }}
+              title={captionWarning}
+            >
+              <span className="flex-shrink-0">⚠</span>
+              <span className="truncate">{captionWarning}</span>
+              <span className="text-yellow-600 flex-shrink-0">click</span>
+            </button>
+            <button onClick={() => setCaptionWarning(null)} className="absolute -top-1 -right-1 w-4 h-4 text-gray-600 hover:text-gray-300 text-xs bg-gray-900 rounded-full flex items-center justify-center">✕</button>
           </div>
         )}
 
