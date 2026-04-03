@@ -137,19 +137,6 @@ function escapeDrawtext(str) {
     .replace(/%/g, '%%')
 }
 
-function findFontFile(fontName) {
-  const fontPaths = {
-    'Impact':      ['/System/Library/Fonts/Supplemental/Impact.ttf', '/Library/Fonts/Impact.ttf', '/usr/share/fonts/truetype/msttcorefonts/Impact.ttf'],
-    'Arial Black': ['/System/Library/Fonts/Supplemental/Arial Black.ttf', '/Library/Fonts/Arial Black.ttf'],
-    'Helvetica':   ['/System/Library/Fonts/Helvetica.ttc', '/Library/Fonts/Helvetica.ttf'],
-    'Arial':       ['/System/Library/Fonts/Supplemental/Arial.ttf', '/Library/Fonts/Arial.ttf', '/usr/share/fonts/truetype/msttcorefonts/Arial.ttf'],
-  }
-  for (const p of (fontPaths[fontName] || [])) {
-    if (fs.existsSync(p)) return p
-  }
-  return null
-}
-
 function buildDrawtextFilter(words, captionStyle) {
   const { size = 72, color = '#ffffff', outlineColor = '#000000', outlineSize = 2,
     position = 'bottom', allCaps = true, font = 'Impact' } = captionStyle
@@ -157,9 +144,8 @@ function buildDrawtextFilter(words, captionStyle) {
   const fontColor = '0x' + (color.replace('#', '') || 'ffffff')
   const borderColor = '0x' + (outlineColor.replace('#', '') || '000000')
   const yExpr = position === 'top' ? '80' : position === 'middle' ? '(h-text_h)/2' : 'h-text_h-80'
-
-  const fontFile = findFontFile(font)
-  const fontPart = fontFile ? `fontfile='${escapeDrawtext(fontFile)}'` : `font='${escapeDrawtext(font)}'`
+  // Use fontconfig name — avoids picking up wrong/corrupted font files from disk
+  const fontPart = `font='${escapeDrawtext(font)}'`
 
   const parts = words.map((w) => {
     const raw = (allCaps ? w.word.trim().toUpperCase() : w.word.trim())
@@ -180,8 +166,7 @@ function buildDrawtextFilterSentences(words, captionStyle) {
   const fontColor = '0x' + (color.replace('#', '') || 'ffffff')
   const borderColor = '0x' + (outlineColor.replace('#', '') || '000000')
   const yExpr = position === 'top' ? '80' : position === 'middle' ? '(h-text_h)/2' : 'h-text_h-80'
-  const fontFile = findFontFile(font)
-  const fontPart = fontFile ? `fontfile='${escapeDrawtext(fontFile)}'` : `font='${escapeDrawtext(font)}'`
+  const fontPart = `font='${escapeDrawtext(font)}'`
 
   const parts = []
   let sentWords = []
@@ -235,30 +220,33 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
   }
 
   // Fallback: drawtext (no libass needed, always available)
-  const vfFilter = captionStyle.mode === 'sentence'
-    ? buildDrawtextFilterSentences(words, captionStyle)
-    : buildDrawtextFilter(words, captionStyle)
+  const buildFilter = (style) => captionStyle.mode === 'sentence'
+    ? buildDrawtextFilterSentences(words, style)
+    : buildDrawtextFilter(words, style)
 
-  if (!vfFilter) {
-    fs.copyFileSync(srcPath, dstPath)
-    return 'No caption words found in range.'
+  // Try with the chosen font, then fall back to 'Sans' if font lookup fails
+  for (const styleOverride of [captionStyle, { ...captionStyle, font: 'Sans' }]) {
+    const vfFilter = buildFilter(styleOverride)
+    if (!vfFilter) break
+
+    sendProg(0)
+    try {
+      await spawnPromise(ffmpegPath,
+        ['-y', '-i', srcPath, '-vf', vfFilter, '-c:a', 'copy', '-movflags', '+faststart', dstPath],
+        (chunk) => {
+          const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+          if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
+        }
+      )
+      return null  // success
+    } catch {
+      // try next font fallback
+    }
   }
 
-  sendProg(0)
-  try {
-    await spawnPromise(ffmpegPath,
-      ['-y', '-i', srcPath, '-vf', vfFilter, '-c:a', 'copy', '-movflags', '+faststart', dstPath],
-      (chunk) => {
-        const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
-        if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
-      }
-    )
-    return null  // success with drawtext
-  } catch (e) {
-    // Both methods failed — copy without captions
-    fs.copyFileSync(srcPath, dstPath)
-    return `Caption burn-in failed: ${e.message.split('\n')[0]}`
-  }
+  // All methods failed — export without captions
+  fs.copyFileSync(srcPath, dstPath)
+  return 'Caption burn-in failed (font not found). Install ffmpeg with libass: brew reinstall ffmpeg'
 }
 
 // Remap transcript words to a new timeline defined by kept segments
