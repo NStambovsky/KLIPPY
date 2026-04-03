@@ -21,6 +21,14 @@ if ! command -v ffmpeg &>/dev/null; then
   brew install ffmpeg
 fi
 
+# Ensure ffmpeg has caption support (libfreetype for drawtext, libass for subtitles).
+# A minimal or outdated ffmpeg build may be missing these — reinstall to get the
+# full Homebrew bottle which includes both.
+if ! ffmpeg -filters 2>&1 | grep -q "drawtext"; then
+  echo "ffmpeg is missing caption support (libfreetype). Reinstalling..."
+  brew reinstall ffmpeg
+fi
+
 # ── Node.js ────────────────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
   echo "Installing Node.js..."
