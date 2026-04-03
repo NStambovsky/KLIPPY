@@ -240,7 +240,7 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
   // Fallback: drawtext (requires libfreetype, almost always present)
   if (!(await hasDrawtextFilter())) {
     fs.copyFileSync(srcPath, dstPath)
-    return 'Caption burn-in requires ffmpeg with libfreetype or libass. Run: brew reinstall ffmpeg'
+    return `Caption burn-in requires ffmpeg with libfreetype or libass. Your ffmpeg: ${ffmpegPath}. Fix: open Terminal and run → brew reinstall ffmpeg`
   }
 
   const isSentence = captionStyle.mode === 'sentence'
@@ -710,6 +710,19 @@ app.whenReady().then(() => {
   const win = createWindow()
   buildMenu(win)
   registerHandlers(win)
+
+  // After renderer loads, check ffmpeg capabilities and warn if missing
+  win.webContents.once('did-finish-load', async () => {
+    const filters = await getFFmpegFilters()
+    const hasDrawtext = /\bdrawtext\b/.test(filters)
+    const hasSubtitles = /\bsubtitles\b/.test(filters)
+    if (!hasDrawtext && !hasSubtitles) {
+      win.webContents.send('captionWarning',
+        `Caption export unavailable — ffmpeg at ${ffmpegPath} is missing libfreetype and libass. ` +
+        `Open Terminal and run: brew reinstall ffmpeg`
+      )
+    }
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
