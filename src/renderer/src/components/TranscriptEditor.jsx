@@ -1,5 +1,12 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react'
 
+function fmt(ms) {
+  if (!isFinite(ms) || ms == null) return '0:00'
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  return `${m}:${String(s % 60).padStart(2, '0')}`
+}
+
 export default function TranscriptEditor({
   transcript, deletedIds, currentTimeMs,
   onSeek, onDelete, onRestore, onMakeClip,
@@ -141,7 +148,7 @@ export default function TranscriptEditor({
       onMouseLeave={() => { if (isDragging) setIsDragging(false) }}
     >
       <p className="text-xs text-gray-600 mb-3">
-        Click a word to seek · drag to select · Delete to cut · right-click for options
+        Click to seek · drag to select · use the bar below to create a clip or cut
       </p>
 
       <div className="leading-8 text-sm text-gray-200">
@@ -180,6 +187,42 @@ export default function TranscriptEditor({
           )
         })}
       </div>
+
+      {/* Selection action bar */}
+      {hasSelection && (
+        <div className="sticky bottom-0 left-0 right-0 bg-gray-900/95 backdrop-blur border-t border-gray-700 px-3 py-2 flex items-center gap-3 shadow-lg">
+          <span className="text-xs text-gray-400">
+            {selMax - selMin + 1} words
+            <span className="text-gray-600 ml-2">
+              {fmt(transcript[selMin].startMs)} – {fmt(transcript[selMax].endMs)}
+            </span>
+          </span>
+          <div className="flex gap-2 ml-auto">
+            <button
+              onClick={() => {
+                const ids = []
+                for (let i = selMin; i <= selMax; i++) ids.push(transcript[i].id)
+                const allDeleted = ids.every((id) => deletedIds.has(id))
+                if (allDeleted) onRestore(ids)
+                else onDelete(ids)
+                setDragStart(null); setDragEnd(null)
+              }}
+              className="px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+            >
+              ✂ Cut
+            </button>
+            <button
+              onClick={() => {
+                onMakeClip(selMin, selMax)
+                setDragStart(null); setDragEnd(null)
+              }}
+              className="px-3 py-1 text-xs bg-violet-600 hover:bg-violet-500 rounded font-medium transition-colors"
+            >
+              🎬 Create Clip
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Context menu */}
       {contextMenu && (

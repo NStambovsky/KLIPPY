@@ -108,7 +108,7 @@ export default function ClipsPanel({
             <div className="flex flex-col items-center justify-center h-full text-center px-4 text-gray-600">
               <p className="text-3xl mb-2 opacity-20">🎬</p>
               <p className="text-sm">No clips yet.</p>
-              <p className="text-xs mt-1">Select words in the transcript,<br/>right-click → Make Clip</p>
+              <p className="text-xs mt-1">Select words in the transcript<br/>and click "Create Clip"</p>
             </div>
           ) : clips.map((clip) => (
             <ClipCard key={clip.id} clip={clip} onSeek={onSeek} onExport={onExportClip} onDelete={onDeleteClip} onRename={onRenameClip} />
