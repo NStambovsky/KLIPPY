@@ -137,23 +137,31 @@ function escapeDrawtext(str) {
     .replace(/%/g, '%%')
 }
 
-// Returns a readable font file guaranteed to be a system font (never user-installed)
+// Returns a readable font file from guaranteed system-only directories
 function findSystemFontFile() {
-  const candidates = [
-    // macOS core fonts — always present, never user-replaced
-    '/System/Library/Fonts/Helvetica.ttc',
-    '/System/Library/Fonts/Times.ttc',
-    '/System/Library/Fonts/Courier.ttc',
-    '/System/Library/Fonts/Monaco.ttf',
-    '/System/Library/Fonts/Menlo.ttc',
-    // Linux
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-    '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
-    '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-    '/usr/share/fonts/TTF/DejaVuSans.ttf',
+  // Directories to scan — system-level only, never user font dirs
+  const dirs = [
+    '/System/Library/Fonts',
+    '/System/Library/Fonts/Supplemental',
+    '/opt/homebrew/share/fonts',
+    '/usr/local/share/fonts',
+    '/usr/share/fonts/truetype/dejavu',
+    '/usr/share/fonts/truetype/liberation',
+    '/usr/share/fonts/truetype/freefont',
+    '/usr/share/fonts/TTF',
+    '/usr/share/fonts',
   ]
-  for (const p of candidates) {
-    try { fs.accessSync(p, fs.constants.R_OK); return p } catch {}
+  for (const dir of dirs) {
+    let files
+    try { files = fs.readdirSync(dir) } catch { continue }
+    // Prefer plain TTF (most compatible with drawtext), then TTC/OTF
+    for (const ext of ['.ttf', '.otf', '.ttc']) {
+      const match = files.find((f) => f.toLowerCase().endsWith(ext))
+      if (match) {
+        const p = path.join(dir, match)
+        try { fs.accessSync(p, fs.constants.R_OK); return p } catch {}
+      }
+    }
   }
   return null
 }
