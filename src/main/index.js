@@ -40,24 +40,25 @@ function saveSettings(data) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2))
 }
 
-// ─── Check libass / subtitles filter availability (cached) ────────────────────
-let _subtitlesFilterAvailable = null
+// ─── Check filter availability (cached) ───────────────────────────────────────
+let _ffmpegFilters = null
+async function getFFmpegFilters() {
+  if (_ffmpegFilters !== null) return _ffmpegFilters
+  _ffmpegFilters = await new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ['-filters'])
+    let out = ''
+    proc.stdout.on('data', (d) => { out += d })
+    proc.stderr.on('data', (d) => { out += d })
+    proc.on('close', () => resolve(out))
+    proc.on('error', () => resolve(''))
+  })
+  return _ffmpegFilters
+}
 async function hasSubtitlesFilter() {
-  if (_subtitlesFilterAvailable !== null) return _subtitlesFilterAvailable
-  try {
-    const combined = await new Promise((resolve) => {
-      const proc = spawn(ffmpegPath, ['-filters'])
-      let out = ''
-      proc.stdout.on('data', (d) => { out += d })
-      proc.stderr.on('data', (d) => { out += d })
-      proc.on('close', () => resolve(out))
-      proc.on('error', () => resolve(''))
-    })
-    _subtitlesFilterAvailable = /\bsubtitles\b/.test(combined)
-  } catch {
-    _subtitlesFilterAvailable = false
-  }
-  return _subtitlesFilterAvailable
+  return /\bsubtitles\b/.test(await getFFmpegFilters())
+}
+async function hasDrawtextFilter() {
+  return /\bdrawtext\b/.test(await getFFmpegFilters())
 }
 
 // ─── ASS subtitle helpers ──────────────────────────────────────────────────────
@@ -236,7 +237,12 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
     }
   }
 
-  // Fallback: drawtext (no libass needed, always available in ffmpeg)
+  // Fallback: drawtext (requires libfreetype, almost always present)
+  if (!(await hasDrawtextFilter())) {
+    fs.copyFileSync(srcPath, dstPath)
+    return 'Caption burn-in requires ffmpeg with libfreetype or libass. Run: brew reinstall ffmpeg'
+  }
+
   const isSentence = captionStyle.mode === 'sentence'
   const chosenFont = captionStyle.font || 'Impact'
 
@@ -280,7 +286,8 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
   // All methods failed — export without captions
   fs.copyFileSync(srcPath, dstPath)
   console.log('[KLIPPY] all caption strategies failed:', errors)
-  return `Caption burn-in failed. Tried ${fontStrategies.length} font strategies. Details in console. Fix: brew reinstall ffmpeg`
+  const firstErr = errors[0] || 'unknown error'
+  return `Caption burn-in failed (drawtext): ${firstErr.slice(0, 120)}. Fix: brew reinstall ffmpeg`
 }
 
 // Remap transcript words to a new timeline defined by kept segments
