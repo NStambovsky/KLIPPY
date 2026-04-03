@@ -740,12 +740,22 @@ app.whenReady().then(() => {
   registerHandlers(win)
 
   // After renderer loads, check ffmpeg capabilities and warn if missing.
-  // Use -version flag detection (reliable, no render needed) rather than a probe render.
   win.webContents.once('did-finish-load', async () => {
-    const [hasFt, hasAss] = await Promise.all([
-      ffmpegHasLib('libfreetype'),
-      ffmpegHasLib('libass'),
-    ])
+    // Log full version string so we can diagnose capability detection issues
+    const versionOut = await new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, ['-version'])
+      let out = ''
+      proc.stdout.on('data', (d) => { out += d })
+      proc.stderr.on('data', (d) => { out += d })
+      proc.on('close', () => resolve(out))
+      proc.on('error', () => resolve(''))
+    })
+    console.log('[KLIPPY] ffmpeg -version output:', versionOut.slice(0, 1000))
+
+    const hasFt = versionOut.includes('libfreetype')
+    const hasAss = versionOut.includes('libass')
+    console.log('[KLIPPY] caption capability — libfreetype:', hasFt, '  libass:', hasAss)
+
     if (!hasFt && !hasAss) {
       win.webContents.send('captionWarning',
         `Caption export unavailable — ffmpeg at ${ffmpegPath} is missing libfreetype and libass. ` +
