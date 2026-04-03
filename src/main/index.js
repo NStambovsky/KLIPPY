@@ -40,17 +40,15 @@ function saveSettings(data) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2))
 }
 
-// ─── Check filter availability — test by actually running a 1-frame command ───
-// Parsing '-filters' output is unreliable; this is the ground truth.
-let _drawtextOk = null
-let _subtitlesOk = null
+// ─── Detect working font + filter strategy at startup (cached) ────────────────
+let _workingFontPart = undefined  // undefined = not yet probed; null = none found
 
-async function probeFilter(vfArg) {
+async function probeDrawtext(fontPart) {
   return new Promise((resolve) => {
     const proc = spawn(ffmpegPath, [
       '-y', '-loglevel', 'error',
       '-f', 'lavfi', '-i', 'color=black:s=16x16:d=0.04',
-      '-vf', vfArg,
+      '-vf', `drawtext=${fontPart}:text='x':fontsize=10:fontcolor=white`,
       '-frames:v', '1', '-f', 'null', '-',
     ])
     proc.on('close', (code) => resolve(code === 0))
@@ -58,16 +56,23 @@ async function probeFilter(vfArg) {
   })
 }
 
-async function hasDrawtextFilter() {
-  if (_drawtextOk !== null) return _drawtextOk
-  _drawtextOk = await probeFilter("drawtext=text='x':fontsize=10:fontcolor=white")
-  return _drawtextOk
+// Returns a working fontPart string for drawtext, or null if drawtext unavailable
+async function getWorkingFontPart() {
+  if (_workingFontPart !== undefined) return _workingFontPart
+  const strategies = ["font='Impact'", "font='Helvetica'", "font='Sans'"]
+  const sysFont = findSystemFontFile()
+  if (sysFont) strategies.push(`fontfile='${escapeDrawtext(sysFont)}'`)
+  for (const fp of strategies) {
+    if (await probeDrawtext(fp)) { _workingFontPart = fp; return fp }
+  }
+  _workingFontPart = null
+  return null
 }
 
+async function hasDrawtextFilter() { return (await getWorkingFontPart()) !== null }
+
 async function hasSubtitlesFilter() {
-  if (_subtitlesOk !== null) return _subtitlesOk
-  // subtitles filter needs a real file — just check presence via -filters text
-  _subtitlesOk = await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const proc = spawn(ffmpegPath, ['-filters'])
     let out = ''
     proc.stdout.on('data', (d) => { out += d })
@@ -75,7 +80,6 @@ async function hasSubtitlesFilter() {
     proc.on('close', () => resolve(/\bsubtitles\b/.test(out)))
     proc.on('error', () => resolve(false))
   })
-  return _subtitlesOk
 }
 
 // ─── ASS subtitle helpers ──────────────────────────────────────────────────────
@@ -254,65 +258,44 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
     }
   }
 
-  // Fallback: drawtext (requires libfreetype, almost always present)
-  if (!(await hasDrawtextFilter())) {
+  // Fallback: drawtext — use the same font strategy that was probed at startup (cached)
+  const fontPart = await getWorkingFontPart()
+  if (!fontPart) {
     fs.copyFileSync(srcPath, dstPath)
     return `Caption burn-in requires ffmpeg with libfreetype or libass. Your ffmpeg: ${ffmpegPath}. Fix: open Terminal and run → brew reinstall ffmpeg`
   }
 
   const isSentence = captionStyle.mode === 'sentence'
-  const chosenFont = captionStyle.font || 'Impact'
-
-  // Font strategies in priority order:
-  // 1. fontconfig by name (chosen font)
-  // 2. fontconfig 'Helvetica' (common on macOS via fontconfig)
-  // 3. fontconfig 'Sans' (universal fallback)
-  // 4. fontfile= pointing at a guaranteed macOS/Linux system font
-  const fontStrategies = [
-    `font='${escapeDrawtext(chosenFont)}'`,
-    `font='Helvetica'`,
-    `font='Sans'`,
-  ]
-  const systemFile = findSystemFontFile()
-  console.log('[KLIPPY] drawtext system font found:', systemFile)
-  if (systemFile) fontStrategies.push(`fontfile='${escapeDrawtext(systemFile)}'`)
-
-  const errors = []
-  for (const fontPart of fontStrategies) {
-    const vfFilter = buildDrawtextFilterWithFont(words, captionStyle, fontPart, isSentence)
-    if (!vfFilter) break
-
-    sendProg(0)
-    // Use a custom spawn that captures full stderr (not just last 500 chars)
-    // and suppresses ffmpeg's version banner with -loglevel error
-    const result = await new Promise((resolve) => {
-      const proc = spawn(ffmpegPath, ['-y', '-loglevel', 'error', '-i', srcPath, '-vf', vfFilter, '-c:a', 'copy', '-movflags', '+faststart', dstPath])
-      let stderr = ''
-      proc.stderr.on('data', (d) => {
-        const chunk = d.toString()
-        stderr += chunk
-        const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
-        if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
-      })
-      proc.on('close', (code) => resolve({ code, stderr }))
-      proc.on('error', (e) => resolve({ code: -1, stderr: e.message }))
-    })
-
-    if (result.code === 0) {
-      console.log('[KLIPPY] drawtext success with:', fontPart)
-      return null
-    }
-    const errMsg = result.stderr.trim().slice(0, 400)
-    console.log('[KLIPPY] drawtext failed with', fontPart, ':', errMsg)
-    errors.push(`${fontPart}: ${errMsg}`)
+  const vfFilter = buildDrawtextFilterWithFont(words, captionStyle, fontPart, isSentence)
+  if (!vfFilter) {
+    fs.copyFileSync(srcPath, dstPath)
+    return null  // no words to render — that's fine
   }
 
-  // All methods failed — export without captions
+  sendProg(0)
+  const dtResult = await new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ['-y', '-loglevel', 'error', '-i', srcPath, '-vf', vfFilter, '-c:a', 'copy', '-movflags', '+faststart', dstPath])
+    let stderr = ''
+    proc.stderr.on('data', (d) => {
+      const chunk = d.toString()
+      stderr += chunk
+      const m = chunk.match(/time=(\d+):(\d+):(\d+\.\d+)/)
+      if (m) sendProg(Math.min(0.95, (+m[1]*3600 + +m[2]*60 + parseFloat(m[3])) / totalSec))
+    })
+    proc.on('close', (code) => resolve({ code, stderr }))
+    proc.on('error', (e) => resolve({ code: -1, stderr: e.message }))
+  })
+
+  if (dtResult.code === 0) {
+    console.log('[KLIPPY] drawtext success with:', fontPart)
+    return null
+  }
+
+  // drawtext failed despite passing the probe — export without captions
   fs.copyFileSync(srcPath, dstPath)
-  console.log('[KLIPPY] all caption strategies failed:', errors)
-  // Show first actual error (now clean — banner suppressed by -loglevel error)
-  const firstErr = (errors[0] || 'unknown error').replace(/^font='[^']*': /, '').replace(/^fontfile='[^']*': /, '')
-  return `Caption burn-in failed: ${firstErr.slice(0, 200)}`
+  const errMsg = dtResult.stderr.trim().slice(0, 400)
+  console.log('[KLIPPY] drawtext failed with', fontPart, ':', errMsg)
+  return `Caption burn-in failed: ${errMsg.slice(0, 200)}`
 }
 
 // Remap transcript words to a new timeline defined by kept segments
