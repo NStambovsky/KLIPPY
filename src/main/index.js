@@ -43,15 +43,43 @@ function saveSettings(data) {
 // ─── Detect working font + filter strategy at startup (cached) ────────────────
 let _workingFontPart = undefined  // undefined = not yet probed; null = none found
 
+// Minimal 1×1 black PNG — used as probe input so we don't need lavfi
+const PROBE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg==',
+  'base64'
+)
+let _probePngPath = null
+function getProbePngPath() {
+  if (_probePngPath && fs.existsSync(_probePngPath)) return _probePngPath
+  const dir = path.join(os.tmpdir(), 'klippy')
+  fs.mkdirSync(dir, { recursive: true })
+  _probePngPath = path.join(dir, 'probe.png')
+  fs.writeFileSync(_probePngPath, PROBE_PNG)
+  return _probePngPath
+}
+
 async function probeDrawtext(fontPart) {
+  const pngPath = getProbePngPath()
   return new Promise((resolve) => {
     const proc = spawn(ffmpegPath, [
       '-y', '-loglevel', 'error',
-      '-f', 'lavfi', '-i', 'color=black:s=16x16:d=0.04',
-      '-vf', `drawtext=${fontPart}:text='x':fontsize=10:fontcolor=white`,
+      '-i', pngPath,
+      '-vf', `drawtext=${fontPart}:text=x:fontsize=10:fontcolor=white`,
       '-frames:v', '1', '-f', 'null', '-',
     ])
     proc.on('close', (code) => resolve(code === 0))
+    proc.on('error', () => resolve(false))
+  })
+}
+
+// Check if ffmpeg was built with a specific library (from -version output)
+async function ffmpegHasLib(libName) {
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ['-version'])
+    let out = ''
+    proc.stdout.on('data', (d) => { out += d })
+    proc.stderr.on('data', (d) => { out += d })
+    proc.on('close', () => resolve(out.includes(libName)))
     proc.on('error', () => resolve(false))
   })
 }
@@ -711,10 +739,14 @@ app.whenReady().then(() => {
   buildMenu(win)
   registerHandlers(win)
 
-  // After renderer loads, check ffmpeg capabilities and warn if missing
+  // After renderer loads, check ffmpeg capabilities and warn if missing.
+  // Use -version flag detection (reliable, no render needed) rather than a probe render.
   win.webContents.once('did-finish-load', async () => {
-    const [dt, sub] = await Promise.all([hasDrawtextFilter(), hasSubtitlesFilter()])
-    if (!dt && !sub) {
+    const [hasFt, hasAss] = await Promise.all([
+      ffmpegHasLib('libfreetype'),
+      ffmpegHasLib('libass'),
+    ])
+    if (!hasFt && !hasAss) {
       win.webContents.send('captionWarning',
         `Caption export unavailable — ffmpeg at ${ffmpegPath} is missing libfreetype and libass. ` +
         `Open Terminal and run: brew reinstall ffmpeg`
