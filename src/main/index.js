@@ -20,8 +20,8 @@ function findBin(name) {
   }
   return name
 }
-const ffmpegPath = findBin('ffmpeg')
-const ffprobePath = findBin('ffprobe')
+let ffmpegPath = findBin('ffmpeg')
+let ffprobePath = findBin('ffprobe')
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
 function getSettingsPath() {
@@ -32,12 +32,16 @@ function loadSettings() {
     const p = getSettingsPath()
     if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'))
   } catch {}
-  return { openaiKey: '', anthropicKey: '', whisperModel: 'whisper-1' }
+  return { anthropicKey: '', whisperModel: 'base', ffmpegPath: '', ffprobePath: '' }
 }
 function saveSettings(data) {
   const p = getSettingsPath()
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(data, null, 2))
+}
+function applyFfmpegSettings(s) {
+  if (s.ffmpegPath && fs.existsSync(s.ffmpegPath)) ffmpegPath = s.ffmpegPath
+  if (s.ffprobePath && fs.existsSync(s.ffprobePath)) ffprobePath = s.ffprobePath
 }
 
 // ─── Check filter availability (cached) ───────────────────────────────────────
@@ -685,7 +689,12 @@ ${indexed}`,
 
   // settings
   ipcMain.handle('settings:get', () => loadSettings())
-  ipcMain.handle('settings:set', (_e, data) => { saveSettings(data); return true })
+  ipcMain.handle('settings:set', (_e, data) => {
+    saveSettings(data)
+    applyFfmpegSettings(data)
+    _ffmpegFilters = null  // reset filter cache so next export re-checks
+    return true
+  })
 }
 
 // ─── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -694,6 +703,8 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 app.whenReady().then(() => {
+  applyFfmpegSettings(loadSettings())
+
   protocol.handle('media', (req) => {
     try {
       const filePath = decodeURIComponent(req.url.slice('media://'.length))

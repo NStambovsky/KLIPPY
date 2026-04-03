@@ -54,6 +54,26 @@ export default function SettingsModal({ settings, onSave, onClose }) {
             </p>
           </div>
 
+          <hr className="border-gray-800" />
+
+          {/* Custom FFmpeg paths — for users whose system ffmpeg lacks libfreetype/libass */}
+          <div>
+            <label className="block text-xs font-medium text-gray-300 mb-1">
+              Custom FFmpeg path
+              <span className="text-gray-500 font-normal ml-1">(optional — only needed for caption export)</span>
+            </label>
+            <input
+              type="text"
+              value={form.ffmpegPath || ''}
+              onChange={(e) => set('ffmpegPath', e.target.value)}
+              placeholder="/usr/local/bin/ffmpeg"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 outline-none focus:border-violet-500 transition-colors font-mono"
+            />
+            <p className="text-xs text-gray-600 mt-1">
+              Point to an ffmpeg binary with libfreetype or libass for caption burn-in. Leave blank to use the default.
+            </p>
+          </div>
+
           <p className="text-xs text-gray-600">
             All settings stored locally on your machine.
           </p>
