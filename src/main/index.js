@@ -137,56 +137,65 @@ function escapeDrawtext(str) {
     .replace(/%/g, '%%')
 }
 
-function buildDrawtextFilter(words, captionStyle) {
-  const { size = 72, color = '#ffffff', outlineColor = '#000000', outlineSize = 2,
-    position = 'bottom', allCaps = true, font = 'Impact' } = captionStyle
-
-  const fontColor = '0x' + (color.replace('#', '') || 'ffffff')
-  const borderColor = '0x' + (outlineColor.replace('#', '') || '000000')
-  const yExpr = position === 'top' ? '80' : position === 'middle' ? '(h-text_h)/2' : 'h-text_h-80'
-  // Use fontconfig name — avoids picking up wrong/corrupted font files from disk
-  const fontPart = `font='${escapeDrawtext(font)}'`
-
-  const parts = words.map((w) => {
-    const raw = (allCaps ? w.word.trim().toUpperCase() : w.word.trim())
-    if (!raw) return null
-    const text = escapeDrawtext(raw)
-    const t0 = Math.max(0, w.startMs / 1000).toFixed(3)
-    const t1 = ((w.endMs + 50) / 1000).toFixed(3)
-    return `drawtext=${fontPart}:text='${text}':fontsize=${size}:fontcolor=${fontColor}:borderw=${outlineSize}:bordercolor=${borderColor}:x=(w-text_w)/2:y=${yExpr}:enable='between(t,${t0},${t1})'`
-  }).filter(Boolean)
-
-  return parts.length ? parts.join(',') : null
+// Returns a readable font file guaranteed to be a system font (never user-installed)
+function findSystemFontFile() {
+  const candidates = [
+    // macOS core fonts — always present, never user-replaced
+    '/System/Library/Fonts/Helvetica.ttc',
+    '/System/Library/Fonts/Times.ttc',
+    '/System/Library/Fonts/Courier.ttc',
+    '/System/Library/Fonts/Monaco.ttf',
+    '/System/Library/Fonts/Menlo.ttc',
+    // Linux
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
+    '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+    '/usr/share/fonts/TTF/DejaVuSans.ttf',
+  ]
+  for (const p of candidates) {
+    try { fs.accessSync(p, fs.constants.R_OK); return p } catch {}
+  }
+  return null
 }
 
-function buildDrawtextFilterSentences(words, captionStyle) {
+// Build a drawtext filter chain. fontPart = the font option string, e.g. "font='Impact'"
+function buildDrawtextFilterWithFont(words, captionStyle, fontPart, sentence = false) {
   const { size = 72, color = '#ffffff', outlineColor = '#000000', outlineSize = 2,
-    position = 'bottom', allCaps = true, font = 'Impact' } = captionStyle
+    position = 'bottom', allCaps = true } = captionStyle
 
   const fontColor = '0x' + (color.replace('#', '') || 'ffffff')
   const borderColor = '0x' + (outlineColor.replace('#', '') || '000000')
   const yExpr = position === 'top' ? '80' : position === 'middle' ? '(h-text_h)/2' : 'h-text_h-80'
-  const fontPart = `font='${escapeDrawtext(font)}'`
+  const base = `${fontPart}:fontcolor=${fontColor}:borderw=${outlineSize}:bordercolor=${borderColor}:x=(w-text_w)/2:y=${yExpr}`
 
-  const parts = []
-  let sentWords = []
-  for (let i = 0; i < words.length; i++) {
-    sentWords.push(words[i])
-    const isLast = i === words.length - 1
-    const nextGap = isLast ? Infinity : (words[i + 1].startMs - words[i].endMs)
-    if (nextGap > 800 || isLast) {
-      const raw = sentWords.map((w) => w.word).join('').trim()
-      const display = allCaps ? raw.toUpperCase() : raw
-      if (display) {
-        const text = escapeDrawtext(display)
-        const t0 = Math.max(0, sentWords[0].startMs / 1000).toFixed(3)
-        const t1 = ((sentWords[sentWords.length - 1].endMs + 100) / 1000).toFixed(3)
-        parts.push(`drawtext=${fontPart}:text='${text}':fontsize=${Math.round(size * 0.6)}:fontcolor=${fontColor}:borderw=${outlineSize}:bordercolor=${borderColor}:x=(w-text_w)/2:y=${yExpr}:enable='between(t,${t0},${t1})'`)
+  if (!sentence) {
+    const parts = words.map((w) => {
+      const raw = allCaps ? w.word.trim().toUpperCase() : w.word.trim()
+      if (!raw) return null
+      const t0 = Math.max(0, w.startMs / 1000).toFixed(3)
+      const t1 = ((w.endMs + 50) / 1000).toFixed(3)
+      return `drawtext=${base}:fontsize=${size}:text='${escapeDrawtext(raw)}':enable='between(t,${t0},${t1})'`
+    }).filter(Boolean)
+    return parts.length ? parts.join(',') : null
+  } else {
+    const parts = []
+    let sentWords = []
+    for (let i = 0; i < words.length; i++) {
+      sentWords.push(words[i])
+      const isLast = i === words.length - 1
+      if ((isLast ? Infinity : words[i + 1].startMs - words[i].endMs) > 800 || isLast) {
+        const raw = sentWords.map((w) => w.word).join('').trim()
+        const display = allCaps ? raw.toUpperCase() : raw
+        if (display) {
+          const t0 = Math.max(0, sentWords[0].startMs / 1000).toFixed(3)
+          const t1 = ((sentWords[sentWords.length - 1].endMs + 100) / 1000).toFixed(3)
+          parts.push(`drawtext=${base}:fontsize=${Math.round(size * 0.6)}:text='${escapeDrawtext(display)}':enable='between(t,${t0},${t1})'`)
+        }
+        sentWords = []
       }
-      sentWords = []
     }
+    return parts.length ? parts.join(',') : null
   }
-  return parts.length ? parts.join(',') : null
 }
 
 // Burn captions into srcPath → dstPath using libass or drawtext fallback
@@ -219,14 +228,25 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
     }
   }
 
-  // Fallback: drawtext (no libass needed, always available)
-  const buildFilter = (style) => captionStyle.mode === 'sentence'
-    ? buildDrawtextFilterSentences(words, style)
-    : buildDrawtextFilter(words, style)
+  // Fallback: drawtext (no libass needed, always available in ffmpeg)
+  const isSentence = captionStyle.mode === 'sentence'
+  const chosenFont = captionStyle.font || 'Impact'
 
-  // Try with the chosen font, then fall back to 'Sans' if font lookup fails
-  for (const styleOverride of [captionStyle, { ...captionStyle, font: 'Sans' }]) {
-    const vfFilter = buildFilter(styleOverride)
+  // Font strategies in priority order:
+  // 1. fontconfig by name (chosen font)
+  // 2. fontconfig 'Helvetica' (common on macOS via fontconfig)
+  // 3. fontconfig 'Sans' (universal fallback)
+  // 4. fontfile= pointing at a guaranteed macOS/Linux system font
+  const fontStrategies = [
+    `font='${escapeDrawtext(chosenFont)}'`,
+    `font='Helvetica'`,
+    `font='Sans'`,
+  ]
+  const systemFile = findSystemFontFile()
+  if (systemFile) fontStrategies.push(`fontfile='${escapeDrawtext(systemFile)}'`)
+
+  for (const fontPart of fontStrategies) {
+    const vfFilter = buildDrawtextFilterWithFont(words, captionStyle, fontPart, isSentence)
     if (!vfFilter) break
 
     sendProg(0)
@@ -240,13 +260,13 @@ async function burnCaptions(srcPath, dstPath, words, captionStyle, progressType,
       )
       return null  // success
     } catch {
-      // try next font fallback
+      // try next font strategy
     }
   }
 
   // All methods failed — export without captions
   fs.copyFileSync(srcPath, dstPath)
-  return 'Caption burn-in failed (font not found). Install ffmpeg with libass: brew reinstall ffmpeg'
+  return 'Caption burn-in failed: no usable font found. For best results: brew reinstall ffmpeg'
 }
 
 // Remap transcript words to a new timeline defined by kept segments
