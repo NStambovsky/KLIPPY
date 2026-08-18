@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Klippy</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css?v=20260404f" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark">K</div>
+          <div>
+            <p class="brand-name">Klippy</p>
+            <p class="brand-subtitle">Transcript editor for clipping and captions</p>
+          </div>
+        </div>
+        <div class="topbar-status">
+          <span class="status-dot"></span>
+          <p id="status" class="status">Choose a file to get started.</p>
+          <span class="toolbar-pill">UI v2026.04.04f</span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="sidebar">
+          <div class="sidebar-section upload-panel">
+            <div class="section-heading">
+              <p class="section-label">Media</p>
+              <h2>Source upload</h2>
+            </div>
+            <label class="upload-dropzone" for="video-input">
+              <input id="video-input" type="file" accept="video/*,audio/*" />
+              <span class="upload-title">Drop a video here</span>
+              <span class="upload-hint">or click to upload a source file for transcription</span>
+            </label>
+            <button id="transcribe-button" class="primary-button" disabled>Transcribe Video</button>
+          </div>
+
+          <div class="sidebar-section caption-controls">
+            <div class="section-heading compact">
+              <p class="section-label">Canvas</p>
+              <h2>Export frame</h2>
+            </div>
+            <label class="control-field">
+              <span>Preset</span>
+              <select id="export-preset">
+                <option value="landscape" selected>YouTube 16:9</option>
+                <option value="portrait">Reels 9:16</option>
+                <option value="square">Square 1:1</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div id="custom-export-size" class="custom-export-size hidden">
+              <label class="control-field inline-field">
+                <span>Width</span>
+                <input id="export-width" type="number" min="320" step="10" value="1920" />
+              </label>
+              <label class="control-field inline-field">
+                <span>Height</span>
+                <input id="export-height" type="number" min="320" step="10" value="1080" />
+              </label>
+            </div>
+            <label class="control-field">
+              <span>Canvas Zoom</span>
+              <input id="export-zoom" type="range" min="50" max="200" step="1" value="100" />
+              <strong id="export-zoom-value">100%</strong>
+            </label>
+            <p class="control-note">100% fills the frame. Lower values zoom out to show more with padding, and higher values crop in tighter.</p>
+          </div>
+
+          <div class="sidebar-section queue-panel">
+            <div class="section-heading compact">
+              <p class="section-label">Auto clipper</p>
+              <h2>Suggested highlights</h2>
+            </div>
+            <div class="queue-item-actions">
+              <button id="generate-auto-clips" class="queue-action" type="button">Generate Top 5</button>
+              <button id="queue-all-auto-clips" class="queue-action" type="button">Queue All</button>
+            </div>
+            <div id="auto-clip-suggestions" class="clip-queue">
+              <p class="empty-queue">No auto-clip suggestions yet.</p>
+            </div>
+          </div>
+
+          <div class="sidebar-section caption-controls">
+            <div class="section-heading compact split">
+              <div>
+                <p class="section-label">Captions</p>
+                <h2>Burned-in style</h2>
+              </div>
+              <label class="toggle">
+                <input id="captions-enabled" type="checkbox" checked />
+                <span>On</span>
+              </label>
+            </div>
+            <label class="control-field">
+              <span>Font Size</span>
+              <input id="caption-font-size" type="range" min="32" max="84" step="2" value="54" />
+              <strong id="caption-font-size-value">54</strong>
+            </label>
+            <label class="control-field">
+              <span>Position</span>
+              <select id="caption-position">
+                <option value="bottom" selected>Bottom</option>
+                <option value="middle_bottom">Middle bottom</option>
+                <option value="middle">Middle</option>
+                <option value="middle_top">Middle top</option>
+                <option value="top">Top</option>
+              </select>
+            </label>
+            <label class="control-field">
+              <span>Vertical Position %</span>
+              <input id="caption-vertical-percent" type="range" min="8" max="92" step="1" value="78" />
+              <strong id="caption-vertical-percent-value">78%</strong>
+            </label>
+            <label class="control-field">
+              <span>Words Per Caption</span>
+              <input id="caption-words-per" type="range" min="2" max="8" step="1" value="4" />
+              <strong id="caption-words-per-value">4</strong>
+            </label>
+          </div>
+
+          <div class="sidebar-section tips">
+            <div class="section-heading compact">
+              <p class="section-label">Workflow</p>
+              <h2>Editing actions</h2>
+            </div>
+            <p>Highlight transcript text, then right-click to remove those words.</p>
+            <p>Highlight transcript text, then right-click to queue a clip from that selection.</p>
+          </div>
+
+          <div class="sidebar-section queue-panel">
+            <div class="section-heading compact">
+              <p class="section-label">Stitch builder</p>
+              <h2>Multi-part clip</h2>
+            </div>
+            <div id="stitch-builder" class="clip-queue">
+              <p class="empty-queue">No stitch segments yet.</p>
+            </div>
+            <div class="queue-item-actions stitch-actions">
+              <button id="queue-stitched-clip" class="queue-action" type="button">Queue stitched clip</button>
+              <button id="clear-stitched-clip" class="queue-action" type="button">Clear stitch</button>
+            </div>
+          </div>
+
+          <div class="sidebar-section queue-panel">
+            <div class="section-heading compact">
+              <p class="section-label">Render queue</p>
+              <h2>Queued clips</h2>
+            </div>
+            <div id="clip-queue" class="clip-queue">
+              <p class="empty-queue">No clips queued yet.</p>
+            </div>
+          </div>
+        </aside>
+
+        <main class="editor-panel">
+          <section class="monitor-panel">
+            <div class="editor-toolbar">
+              <div>
+                <p class="section-label">Workspace</p>
+                <h1>Transcript-first editor</h1>
+              </div>
+              <div class="toolbar-pills">
+                <span class="toolbar-pill">Right-click selection</span>
+                <span class="toolbar-pill">Clips include captions</span>
+              </div>
+            </div>
+
+            <div class="video-stage-grid">
+              <div class="video-card">
+                <div class="card-header">
+                  <div>
+                    <p class="card-kicker">Original</p>
+                    <h2>Source video</h2>
+                  </div>
+                </div>
+                <video id="source-video" controls playsinline></video>
+              </div>
+
+              <div class="video-card">
+                <div class="card-header">
+                  <div>
+                    <p class="card-kicker">Output</p>
+                    <h2>Clip preview</h2>
+                  </div>
+                </div>
+                <video id="clip-video" controls playsinline></video>
+                <div id="latest-clip-actions" class="queue-item-actions hidden">
+                  <a id="latest-clip-download" class="queue-action" href="#" download>Download</a>
+                  <button id="latest-clip-view-library" class="queue-action" type="button">View In Library</button>
+                  <button id="latest-clip-copy-path" class="queue-action" type="button">Copy Folder Path</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="transcript-card">
+            <div class="card-header">
+              <div>
+                <p class="card-kicker">Script</p>
+                <h2>Editable transcript</h2>
+              </div>
+              <span id="selection-pill" class="selection-pill">No selection</span>
+            </div>
+            <div id="transcript" class="transcript"></div>
+          </section>
+
+          <section class="transcript-card clip-library-panel">
+            <div class="card-header">
+              <div>
+                <p class="card-kicker">Library</p>
+                <h2>Rendered clips</h2>
+              </div>
+              <div class="queue-item-actions">
+                <button id="download-all-clips" class="queue-action" type="button">Download All</button>
+              </div>
+            </div>
+            <div id="clip-library" class="clip-library">
+              <p class="empty-queue">No rendered clips yet.</p>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <div id="context-menu" class="context-menu hidden">
+      <button data-action="remove">Remove selected words</button>
+      <button data-action="stitch">Add selection to stitch</button>
+      <button data-action="clip">Add clip to queue</button>
+    </div>
+
+    <script src="/app.js?v=20260404f" defer></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+      }
+    </script>
+  </body>
+</html>
