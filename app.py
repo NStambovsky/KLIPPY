@@ -19,4 +19,11 @@ for path in (UPLOADS_DIR, CLIPS_DIR, STATIC_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 app.include_router(router, prefix="/api")
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
+
+
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

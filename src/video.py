@@ -24,7 +24,10 @@ from .models import CaptionOptions, ClipRequest, ClipResponse, ExportOptions, Tr
 from .settings import CLIPS_DIR, UPLOADS_DIR
 
 
-FONT_PATH = "/System/Library/Fonts/Supplemental/Verdana Bold.ttf"
+FONT_PATHS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Verdana Bold.ttf",
+)
 MEDIA_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac"}
 EXPORT_PRESETS = {
     "landscape": (1920, 1080),
@@ -114,10 +117,12 @@ def _group_caption_words(words: List[TranscriptWord], max_words: int) -> List[Tu
 
 
 def _load_font(font_size: int):
-    try:
-        return ImageFont.truetype(FONT_PATH, font_size)
-    except OSError:
-        return ImageFont.load_default()
+    for font_path in FONT_PATHS:
+        try:
+            return ImageFont.truetype(font_path, font_size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
 
 
 def _caption_y(position: str, height: int, box_height: int) -> int:
